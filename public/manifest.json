@@ -1,0 +1,24 @@
+{
+  "name": "Overload PWA - Progressive Workout & Nutrition",
+  "short_name": "Overload",
+  "description": "Offline-first Progressive Overload & AI Nutrition Coaching PWA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  workout-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: workout-app:latest
+    container_name: workout_app
+    restart: unless-stopped
+    ports:
+      # Expose on custom host port (default: 8085 -> container 8000)
+      - "${HOST_PORT:-8085}:8000"
+    environment:
+      - PORT=8000
+      - DB_PATH=/app/data/workout_app.db
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - SPARKY_URL=${SPARKY_URL:-http://sparkyfitness:8080}
+      - DEFAULT_OLLAMA_MODEL=${DEFAULT_OLLAMA_MODEL:-qwen3:14b}
+      - SPARKY_API_TOKEN=${SPARKY_API_TOKEN:-}
+      - OLLAMA_TIMEOUT_SECONDS=45
+      - SPARKY_TIMEOUT_SECONDS=15
+      - TZ=America/Chicago
+    volumes:
+      # Persistent storage mount for SQLite database and state
+      - workout_data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  workout_data:
+    name: workout_app_data

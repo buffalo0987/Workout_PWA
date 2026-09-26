@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Overload - AI Workout & Nutrition</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0b0f19">
+  
+  <!-- Apple Mobile Web App Meta -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Overload">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+  <!-- Sticky Top Header -->
+  <header class="app-header" style="justify-content: flex-start; gap: 16px;">
+    <button class="hamburger-btn" onclick="document.getElementById('mobileMenu').style.display = document.getElementById('mobileMenu').style.display === 'flex' ? 'none' : 'flex'">☰</button>
+    <div class="brand-title" style="flex-grow: 1;">
+      <span>🔥 Overload</span>
+      <span class="brand-badge">AI PWA</span>
+    </div>
+    <div class="connection-indicator">
+      <div id="statusDot" class="status-dot"></div>
+      <span id="statusText">Online</span>
+      <span id="offlineQueueCount" style="display:none; color: var(--color-warning); font-weight:600; margin-left: 6px;"></span>
+    </div>
+  </header>
+  <nav id="mobileMenu" style="display: none; position: fixed; top: 53px; left: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 12px; background: var(--color-card); border-bottom-left-radius: 12px; border: 1px solid var(--color-card-border); border-top: none; z-index: 100; flex-direction: column; width: 220px; box-shadow: 4px 4px 15px rgba(0,0,0,0.5);">
+    <button class="menu-item" onclick="switchView('view-workout'); document.getElementById('mobileMenu').style.display='none';">🏋️ Single Workout</button>
+    <button class="menu-item" onclick="switchView('view-routines'); document.getElementById('mobileMenu').style.display='none';">📋 Routines</button>
+    <button class="menu-item" onclick="switchView('view-history'); document.getElementById('mobileMenu').style.display='none';">🕒 History</button>
+    <button class="menu-item" onclick="switchView('view-coach'); document.getElementById('mobileMenu').style.display='none';">🤖 AI Coach</button>
+    <button class="menu-item" onclick="switchView('view-settings'); document.getElementById('mobileMenu').style.display='none';">⚙️ Settings</button>
+  </nav>
+
+  <main class="view-container">
+    <!-- View 1: Workout & Live Overload Logging -->
+    <section id="view-workout" class="view active">
+      <!-- Exercise Selector Card -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Active Exercise</h2>
+            <p class="card-subtitle">Select movement or switch routine</p>
+          </div>
+        </div>
+        <!-- Search & Muscle Filter Bar -->
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 8px;">
+          <input id="exerciseSearchInput" type="text" class="form-input" placeholder="🔍 Search 1,500+ movements..." oninput="filterExerciseList()">
+          <select id="exerciseMuscleFilter" class="form-input" onchange="filterExerciseList()">
+            <option value="all">All Muscles</option>
+            <option value="chest">Chest</option>
+            <option value="back">Back</option>
+            <option value="quadriceps">Quadriceps</option>
+            <option value="hamstrings">Hamstrings</option>
+            <option value="shoulders">Shoulders</option>
+            <option value="arms">Arms / Biceps / Triceps</option>
+            <option value="core">Core / Abs</option>
+          </select>
+        </div>
+        <select id="exerciseSelect" class="form-input" onchange="onExerciseSelectionChanged()" style="margin-bottom: 12px;"></select>
+
+        <!-- Wger Exercise Demonstration & Anatomy Card -->
+        <div id="exerciseDemoCard" class="exercise-demo-box" style="margin-bottom: 14px;">
+          <div id="exerciseAnimationBox" class="exercise-animation-container"></div>
+          <div class="exercise-meta-info" style="margin-top: 10px; text-align: left;">
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+              <span id="exMuscleBadge" class="brand-badge" style="background:rgba(59,130,246,0.2); color:#60a5fa;">Target: Chest</span>
+              <span id="exEquipmentBadge" class="brand-badge" style="background:rgba(16,185,129,0.2); color:#34d399;">Barbell</span>
+              <span id="exCategoryBadge" class="brand-badge" style="background:rgba(245,158,11,0.2); color:#fbbf24;">Strength</span>
+            </div>
+            <p id="exDescriptionText" style="font-size:0.875rem; color:#cbd5e1; line-height:1.55; letter-spacing:normal; word-spacing:normal; text-align:left; background:rgba(15,23,42,0.6); padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);"></p>
+          </div>
+        </div>
+
+        <!-- AI Target Recommendation Banner -->
+        <div id="aiTargetBadge" class="ai-badge">⚡ Calculating target...</div>
+        <div id="aiRationale" class="ai-rationale">Consulting past volume and Sparky macros...</div>
+
+        <!-- Logging Input Row -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+          <div>
+            <label id="weightLabel" style="font-size:0.72rem; color:var(--color-text-muted); text-transform:uppercase;">Weight (kg)</label>
+            <input id="targetWeight" type="number" step="0.5" class="input-num" value="80.0">
+
+          </div>
+          <div>
+            <label style="font-size:0.72rem; color:var(--color-text-muted); text-transform:uppercase;">Reps</label>
+            <input id="targetReps" type="number" step="1" class="input-num" value="10">
+          </div>
+          <div>
+            <label style="font-size:0.72rem; color:var(--color-text-muted); text-transform:uppercase;">Target RPE</label>
+            <input id="targetRpe" type="number" step="0.5" min="1" max="10" class="input-num" value="8.5">
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" onclick="logCompletedSet()">
+          ✓ Complete & Log Set (Watch Sync)
+        </button>
+      </div>
+
+      <!-- Quick Add New Exercise Accordion -->
+      <div class="card">
+        <h3 class="card-title" style="margin-bottom: 6px;">＋ Add Custom Exercise</h3>
+        <p class="card-subtitle" style="margin-bottom: 12px;">Expand your library with new barbell, dumbbell, or machine exercises</p>
+        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <input id="newExerciseName" type="text" placeholder="e.g. Incline Cable Fly" class="form-input">
+          <select id="newExerciseCategory" class="form-input">
+            <option value="barbell">Barbell</option>
+            <option value="dumbbell">Dumbbell</option>
+            <option value="machine">Machine</option>
+            <option value="cable">Cable</option>
+            <option value="bodyweight">Bodyweight</option>
+          </select>
+          <select id="newExerciseMuscle" class="form-input">
+            <option value="chest">Chest</option>
+            <option value="back">Back</option>
+            <option value="shoulders">Shoulders</option>
+            <option value="quadriceps">Quads</option>
+            <option value="hamstrings">Hamstrings</option>
+            <option value="biceps">Biceps</option>
+            <option value="triceps">Triceps</option>
+            <option value="calves">Calves</option>
+            <option value="core">Core</option>
+          </select>
+        </div>
+        <button class="btn btn-outline" style="width:100%;" onclick="addNewExercise()">＋ Save to Exercise Catalog</button>
+      </div>
+
+      <!-- Completed Sets Table -->
+      <div class="card">
+        <h3 class="card-title" style="margin-bottom: 8px;">Logged Sets Today</h3>
+        <table class="set-table">
+          <thead>
+            <tr>
+              <th>Set</th>
+              <th>Weight</th>
+              <th>Reps</th>
+              <th>RPE</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="completedSetsList">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- View 2: Routines & Splits (Push Pull Legs) -->
+    <section id="view-routines" class="view">
+      <div class="card-header" style="margin-bottom: 12px;">
+        <div>
+          <h2 class="card-title" style="font-size: 1.2rem;">Workout Routines & Splits</h2>
+          <p class="card-subtitle">Schedule Push, Pull, Legs or create custom splits</p>
+        </div>
+      </div>
+
+      <!-- Existing Routines List -->
+      <div id="routinesList">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <!-- Create New Routine Form -->
+      <div class="card" style="border-top: 2px solid var(--color-primary);">
+        <h3 class="card-title" style="margin-bottom: 8px;">Create New Routine Split</h3>
+        <div class="form-group">
+          <label class="form-label">Routine Title</label>
+          <input id="newRoutineTitle" type="text" class="form-input" placeholder="e.g. Push Day A or Leg Hypertrophy">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description / Focus</label>
+          <input id="newRoutineDesc" type="text" class="form-input" placeholder="e.g. Heavy compound pressing and triceps focus">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Schedule Days</label>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.82rem;">
+            <label><input type="checkbox" name="routineDay" value="Mon"> Mon</label>
+            <label><input type="checkbox" name="routineDay" value="Tue"> Tue</label>
+            <label><input type="checkbox" name="routineDay" value="Wed"> Wed</label>
+            <label><input type="checkbox" name="routineDay" value="Thu"> Thu</label>
+            <label><input type="checkbox" name="routineDay" value="Fri"> Fri</label>
+            <label><input type="checkbox" name="routineDay" value="Sat"> Sat</label>
+            <label><input type="checkbox" name="routineDay" value="Sun"> Sun</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Exercises</label>
+          <div id="routineSelectedExercises" style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+            <!-- dynamically added exercises with sets/reps inputs go here -->
+          </div>
+          <select id="routineExerciseSelector" class="form-input" onchange="addSelectedExerciseToRoutineUI(this)">
+            <option value="">+ Add Exercise to Routine</option>
+            <!-- Populated dynamically by JS -->
+          </select>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="createNewRoutine()">💾 Save Routine Split</button>
+      </div>
+    </section>
+
+    <!-- View: Active Workout Session -->
+    <section id="view-active-workout" class="view">
+      <div class="card-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <h2 id="activeWorkoutTitle" class="card-title" style="font-size: 1.2rem;">Workout Session</h2>
+          <p id="activeWorkoutTimer" class="card-subtitle" style="color: var(--color-primary); font-weight: bold; font-family: monospace; font-size: 1.1rem;">00:00</p>
+        </div>
+        <button class="btn btn-outline" style="color: var(--color-danger); border-color: var(--color-danger);" onclick="finishWorkout()">Finish</button>
+      </div>
+      <div id="activeWorkoutExercises"></div>
+    </section>
+
+    <!-- View: Past Workouts History -->
+    <section id="view-history" class="view">
+      <div class="card-header" style="margin-bottom: 12px;">
+        <div>
+          <h2 class="card-title" style="font-size: 1.2rem;">Past Workouts</h2>
+          <p class="card-subtitle">Your logged training sessions</p>
+        </div>
+        <button class="btn btn-outline" onclick="loadHistory()">↻ Refresh</button>
+      </div>
+      <div id="historyList"></div>
+    </section>
+
+    <!-- View 3: AI Coaching & Chat -->
+    <section id="view-coach" class="view">
+      <!-- Chat Interface -->
+      <div class="card" style="display: flex; flex-direction: column; height: 60vh; max-height: 600px;">
+        <div class="card-header" style="flex-shrink: 0;">
+          <div>
+            <h2 class="card-title">AI Coach Chat</h2>
+            <p class="card-subtitle">Discuss goals, swap exercises, or ask for routines</p>
+          </div>
+        </div>
+        <div id="coachChatHistory" style="flex-grow: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-bottom: 12px;">
+          <div style="background: var(--color-card-border); align-self: flex-start; padding: 8px 12px; border-radius: 12px; max-width: 85%; font-size: 0.9rem;">
+            Hello! I'm your AI Coach. How can I help you tweak your routines today?
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-shrink: 0;">
+          <input id="coachChatInput" type="text" class="form-input" placeholder="e.g. Can you make a 3-day split?" style="margin: 0; flex-grow: 1;" onkeypress="if(event.key==='Enter') sendCoachMessage()">
+          <button class="btn btn-primary" onclick="sendCoachMessage()">Send</button>
+        </div>
+      </div>
+
+      <!-- Weekly Summary -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Weekly AI Coaching Insights</h2>
+            <p class="card-subtitle">Ollama local intelligence analyzing volume & recovery</p>
+          </div>
+        </div>
+        <div id="coachingInsightsList">
+          <!-- Populated dynamically with 3 structured insight bullets -->
+        </div>
+      </div>
+
+      <!-- 7-Day Macro Summary from SparkyFitness -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Nutrition & Fueling Baseline</h2>
+            <p class="card-subtitle">Aggregated via SparkyFitness REST API</p>
+          </div>
+          <button class="btn btn-outline" onclick="loadCoachingInsights()">↻ Refresh</button>
+        </div>
+        <div class="macro-grid">
+          <div class="macro-box">
+            <div id="macroCalories" class="macro-val">-- kcal</div>
+            <div class="macro-lbl">Calories</div>
+          </div>
+          <div class="macro-box">
+            <div id="macroProtein" class="macro-val" style="color: #34d399;">-- g</div>
+            <div class="macro-lbl">Protein</div>
+          </div>
+          <div class="macro-box">
+            <div id="macroCarbs" class="macro-val" style="color: #60a5fa;">-- g</div>
+            <div class="macro-lbl">Carbs</div>
+          </div>
+          <div class="macro-box">
+            <div id="macroFat" class="macro-val" style="color: #fbbf24;">-- g</div>
+            <div class="macro-lbl">Fat</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- View 4: Settings (Ollama & SparkyFitness Configuration) -->
+    <section id="view-settings" class="view">
+      <div class="card-header" style="margin-bottom: 12px;">
+        <div>
+          <h2 class="card-title" style="font-size: 1.2rem;">App Settings</h2>
+          <p class="card-subtitle">Configure your Ollama and SparkyFitness servers</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title" style="margin-bottom: 12px;">🦙 Ollama AI Service</h3>
+        
+        <div class="form-group">
+          <label class="form-label">Ollama Server URL / IP</label>
+          <input id="settingOllamaUrl" type="url" class="form-input" placeholder="http://192.168.1.50:11434 or http://localhost:11434">
+          <p class="form-hint">Base URL where your Ollama instance is hosted.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Weight Unit Preference</label>
+          <select id="settingUnitPref" class="form-input">
+            <option value="kg">Kilograms (kg)</option>
+            <option value="lb">Pounds (lb)</option>
+          </select>
+          <p class="form-hint">Select the unit for UI weight display. Data is stored in kilograms.</p>
+        </div>
+
+        <div class="form-group">
+          <button class="btn btn-outline" onclick="testOllamaConnection()">Test Ollama Connection</button>
+          <div id="ollamaTestStatus" class="form-hint" style="margin-top:4px;"></div>
+        </div>
+
+        <div class="form-group">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+            <label class="form-label" style="margin:0;">Active LLM Model</label>
+            <button class="btn btn-outline" style="padding: 2px 8px; font-size: 0.72rem;" onclick="refreshAvailableModels()">↻ Query /api/tags</button>
+          </div>
+          <select id="settingOllamaModel" class="form-input"></select>
+          <p class="form-hint">Discovered models available on your Ollama instance (e.g. qwen3:14b, gemma4:12b).</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title" style="margin-bottom: 12px;">🥗 SparkyFitness Integration</h3>
+
+        <div class="form-group">
+          <label class="form-label">SparkyFitness Server URL / IP</label>
+          <input id="settingSparkyUrl" type="url" class="form-input" placeholder="http://192.168.1.60:8080 or http://localhost:8080">
+          <p class="form-hint">Base URL where SparkyFitness is hosted.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">SparkyFitness API Token (Bearer)</label>
+          <input id="settingSparkyToken" type="password" class="form-input" placeholder="Enter your SparkyFitness API Token">
+          <p class="form-hint">Used to authenticate with SparkyFitness REST endpoints.</p>
+        </div>
+
+        <div class="form-group">
+          <button class="btn btn-outline" onclick="testSparkyConnection()">Test SparkyFitness Connection</button>
+          <div id="sparkyTestStatus" class="form-hint" style="margin-top:4px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Gym Equipment (AI Context)</h3>
+        <p style="font-size:0.875rem; color:var(--color-text-muted); margin-bottom: 12px; line-height: 1.4;">List the equipment you have available. The AI Coach will strictly only suggest exercises you can perform.</p>
+        <textarea id="settingGymEquipment" class="input-text" style="min-height: 80px;" placeholder="e.g. Dumbbells up to 50lbs, adjustable bench, pull-up bar, no machines."></textarea>
+      </div>
+      <div class="card">
+        <button class="btn btn-primary btn-full" onclick="saveSettings()">💾 Save Settings & Update Server</button>
+        <div id="settingsStatus" style="font-size: 0.8rem; color: var(--color-text-muted); margin-top: 10px; text-align: center;"></div>
+      </div>
+    </section>
+  <!-- Floating Rest Timer -->
+  <div id="restTimerBanner" style="display: none; position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: var(--color-primary); color: white; padding: 12px 24px; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 1000; align-items: center; gap: 12px; font-size: 1.1rem;">
+    ⏳ Rest: <span id="restTimerDisplay" style="font-family: monospace; font-size: 1.2rem;">01:30</span>
+    <button onclick="stopRestTimer()" style="background: rgba(0,0,0,0.3); border: none; color: white; border-radius: 50%; width: 28px; height: 28px; line-height: 1; cursor: pointer;">✕</button>
+  </div>
+
+  </main>
+
+  
+
+  <script src="/js/app.js?v=11"></script>
+</body>
+</html>
