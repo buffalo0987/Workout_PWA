@@ -125,16 +125,19 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/routines":
-                routines = list_routines()
+                user_id = query.get("user_id", ["default_user"])[0]
+                routines = list_routines(user_id)
                 self._send_json(200, {"data": routines, "count": len(routines)})
                 return
 
             if path == "/api/settings":
-                settings = get_app_settings()
+                user_id = query.get("user_id", ["default_user"])[0]
+                settings = get_app_settings(user_id)
                 self._send_json(200, settings)
                 return
             if path == "/api/settings/test-connection":
-                results = test_service_connections()
+                user_id = query.get("user_id", ["default_user"])[0]
+                results = test_service_connections({"user_id": user_id})
                 self._send_json(200, results)
                 return
 
@@ -146,7 +149,8 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/workouts/sessions":
-                sessions = list_workout_sessions()
+                user_id = query.get("user_id", ["default_user"])[0]
+                sessions = list_workout_sessions(user_id)
                 self._send_json(200, {"data": sessions, "count": len(sessions)})
                 return
                 

@@ -32,8 +32,8 @@ def get_db():
 # Settings CRUD & Connectivity Testing
 # -----------------------------------------------------------------------------
 
-def get_app_settings() -> Dict[str, Any]:
-    repo = SettingsRepository(DB_PATH)
+def get_app_settings(user_id: str = 'default_user') -> Dict[str, Any]:
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
     all_settings = repo.get_all_settings()
     ollama_url = repo.get_ollama_base_url()
     
@@ -54,7 +54,8 @@ def get_app_settings() -> Dict[str, Any]:
     }
 
 def update_app_settings(data: Dict[str, Any]) -> Dict[str, Any]:
-    repo = SettingsRepository(DB_PATH)
+    user_id = data.get('user_id', 'default_user')
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
     if "selected_ollama_model" in data:
         repo.set_selected_ollama_model(str(data["selected_ollama_model"]).strip())
     if "ollama_base_url" in data:
@@ -67,14 +68,14 @@ def update_app_settings(data: Dict[str, Any]) -> Dict[str, Any]:
         repo.set_unit_preference(str(data["unit_preference"]).strip())
     if "gym_equipment" in data:
         repo.set_setting("gym_equipment", str(data["gym_equipment"]).strip(), "List of available gym equipment")
-    return get_app_settings()
+    return get_app_settings(user_id)
 
 def test_service_connections(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Tests live HTTP network connectivity to configured Ollama and SparkyFitness servers.
     Returns status, latency (ms), and diagnostic details for each.
     """
-    repo = SettingsRepository(DB_PATH)
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
     data = data or {}
     
     ollama_url = (data.get("ollama_base_url") or repo.get_ollama_base_url()).rstrip("/")
@@ -206,10 +207,10 @@ def get_exercise_by_id(exercise_id: str) -> Optional[Dict[str, Any]]:
 # Routines & Splits (e.g. Push Pull Legs)
 # -----------------------------------------------------------------------------
 
-def list_routines() -> List[Dict[str, Any]]:
+def list_routines(user_id: str = "default_user") -> List[Dict[str, Any]]:
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM routines WHERE is_archived = 0 ORDER BY created_at ASC")
+        cursor.execute("SELECT * FROM routines WHERE is_archived = 0 AND user_id = ? ORDER BY created_at ASC", (user_id,))
         routines = [dict(r) for r in cursor.fetchall()]
         for r in routines:
             try:
@@ -475,7 +476,7 @@ def get_recent_sparky_nutrition_averages(days: int = 3) -> Dict[str, float]:
     total_fat = 0.0
     days_found = 0
 
-    repo = SettingsRepository(DB_PATH)
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
     sparky_url = repo.get_sparky_base_url()
     sparky_token = repo.get_sparky_api_token()
 
@@ -504,7 +505,7 @@ def suggest_workout_progression(data: Dict[str, Any]) -> Dict[str, Any]:
         exercise_ids = [exercise_ids]
 
     user_id = data.get("user_id") or "default_user"
-    settings_repo = SettingsRepository(DB_PATH)
+    settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
     active_model = data.get("model") or settings_repo.get_selected_ollama_model("qwen3:14b")
     ollama_url = settings_repo.get_ollama_base_url()
     unit = settings_repo.get_unit_preference("lbs")
@@ -608,7 +609,7 @@ Return JSON with exact keys:
 
 def get_weekly_volume_and_nutrition() -> Dict[str, Any]:
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    repo = SettingsRepository(DB_PATH)
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
     unit = repo.get_unit_preference("lbs")
 
     with get_db() as conn:
@@ -638,7 +639,7 @@ def get_weekly_volume_and_nutrition() -> Dict[str, Any]:
 
 def generate_coaching_feedback(data: Dict[str, Any]) -> Dict[str, Any]:
     user_id = data.get("user_id") or "default_user"
-    settings_repo = SettingsRepository(DB_PATH)
+    settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
     active_model = data.get("model") or settings_repo.get_selected_ollama_model("qwen3:14b")
     ollama_url = settings_repo.get_ollama_base_url()
     unit = settings_repo.get_unit_preference("lbs")
@@ -714,11 +715,11 @@ def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
     user_id = data.get("user_id") or "default_user"
     messages = data.get("messages", [])
     
-    settings_repo = SettingsRepository(DB_PATH)
+    settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
     active_model = data.get("model") or settings_repo.get_selected_ollama_model("qwen3:14b")
     ollama_url = settings_repo.get_ollama_base_url()
 
-    routines = list_routines()
+    routines = list_routines(user_id)
     routines_context = json.dumps(routines, indent=2)
     
     gym_equipment = settings_repo.get_setting("gym_equipment", "")
@@ -767,40 +768,58 @@ To match exercises, use general names. If the user wants a new routine, generate
     parsed = ollama_res.get("parsed_json") or {}
     message = parsed.get("message", "I couldn't process that properly.")
     routines_to_create = parsed.get("routines_to_create", [])
+    routines_to_update = parsed.get("routines_to_update", [])
+    routines_to_delete = parsed.get("routines_to_delete", [])
 
-    # Auto-apply created routines by matching exercise names to the DB
-    if routines_to_create:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name FROM exercises")
-            all_ex = {r["name"].lower(): r["id"] for r in cursor.fetchall()}
-            
-            for rt in routines_to_create:
-                exercises_payload = []
-                for ex in rt.get("exercises", []):
-                    ex_name = ex.get("name", "").lower()
-                    # simplistic fuzzy match
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM exercises")
+        all_ex = {r["name"].lower(): r["id"] for r in cursor.fetchall()}
+        
+        def match_exercises(rt):
+            exercises_payload = []
+            for ex in rt.get("exercises", []):
+                ex_name = ex.get("name", "").lower()
+                matched_id = ex.get("exercise_id")
+                if not matched_id or len(matched_id) < 5:
                     matched_id = None
                     for db_name, db_id in all_ex.items():
                         if ex_name in db_name or db_name in ex_name:
                             matched_id = db_id
                             break
-                    if matched_id:
-                        ex["exercise_id"] = matched_id
-                        exercises_payload.append(ex)
+                if matched_id:
+                    ex["exercise_id"] = matched_id
+                    exercises_payload.append(ex)
+            return exercises_payload
+
+        for rt in routines_to_create:
+            exercises_payload = match_exercises(rt)
+            if exercises_payload:
+                create_routine({
+                    "user_id": user_id,
+                    "title": rt.get("title", "AI Generated Routine"),
+                    "description": rt.get("description", "Generated by AI Coach"),
+                    "schedule_days": rt.get("schedule_days", []),
+                    "exercises": exercises_payload
+                })
                 
+        for rt in routines_to_update:
+            rt_id = rt.get("id")
+            if rt_id:
+                exercises_payload = match_exercises(rt)
                 if exercises_payload:
-                    create_routine({
-                        "user_id": user_id,
-                        "title": rt.get("title", "AI Generated Routine"),
-                        "description": rt.get("description", "Generated by AI Coach"),
-                        "schedule_days": rt.get("schedule_days", []),
-                        "exercises": exercises_payload
-                    })
+                    rt["exercises"] = exercises_payload
+                    update_routine(rt_id, rt)
+                    
+        for rt_id in routines_to_delete:
+            if rt_id:
+                delete_routine(rt_id)
 
     return {
         "reply": message,
         "routines_created": len(routines_to_create),
+        "routines_updated": len(routines_to_update),
+        "routines_deleted": len(routines_to_delete),
         "model_used": ollama_res.get("model", active_model),
     }
 

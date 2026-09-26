@@ -1,3 +1,4 @@
+const API_USER = localStorage.getItem('workout_user_id') || 'default_user';
 /**
  * Progressive Overload & AI Coaching PWA Application Logic
  * Implements:
@@ -89,7 +90,7 @@ async function syncOfflineQueue() {
   console.log(`[SyncEngine] Attempting to sync ${pending.length} pending sets to backend...`);
   for (const setItem of pending) {
     try {
-      const res = await fetch('/api/workouts/sets', {
+      const res = await fetch(`/api/workouts/sets?user_id=${API_USER}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(setItem),
@@ -149,7 +150,7 @@ async function loadSettings() {
   if (statusEl) statusEl.textContent = 'Loading server settings...';
 
   try {
-    const res = await fetch('/api/settings');
+    const res = await fetch(`/api/settings?user_id=${API_USER}`);
     const data = await res.json();
     state.settings = data.settings || {}; state.settings.unit_preference = data.unit_preference || "kg";
     state.availableModels = data.available_models || [];
@@ -160,6 +161,8 @@ async function loadSettings() {
     const sparkyTokenInput = document.getElementById('settingSparkyToken');
     const modelSelect = document.getElementById('settingOllamaModel');
     const unitSelect = document.getElementById('settingUnitPref');
+    const profileInput = document.getElementById('settingProfileName');
+    if (profileInput) profileInput.value = API_USER;
     const weightLabel = document.getElementById('weightLabel');
     const gymEquipInput = document.getElementById('settingGymEquipment');
 
@@ -196,10 +199,10 @@ window.testOllamaConnection = async function() {
   if (statusEl) statusEl.textContent = 'Testing Ollama connection...';
   try {
     const ollamaUrl = document.getElementById('settingOllamaUrl')?.value.trim();
-    const res = await fetch('/api/settings/test-connection', {
+    const res = await fetch(`/api/settings/test-connection?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ollama_base_url: ollamaUrl })
+      body: JSON.stringify({ user_id: API_USER, ollama_base_url: ollamaUrl })
     });
     const data = await res.json();
     const result = data.ollama;
@@ -221,10 +224,10 @@ window.testSparkyConnection = async function() {
   try {
     const sparkyUrl = document.getElementById('settingSparkyUrl')?.value.trim();
     const sparkyToken = document.getElementById('settingSparkyToken')?.value.trim();
-    const res = await fetch('/api/settings/test-connection', {
+    const res = await fetch(`/api/settings/test-connection?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sparky_base_url: sparkyUrl, sparky_api_token: sparkyToken })
+      body: JSON.stringify({ user_id: API_USER, sparky_base_url: sparkyUrl, sparky_api_token: sparkyToken })
     });
     const data = await res.json();
     const result = data.sparky;
@@ -248,15 +251,20 @@ window.saveSettings = async function() {
   const selectedModel = document.getElementById('settingOllamaModel')?.value;
   const unitPref = document.getElementById('settingUnitPref')?.value;
   const gymEquip = document.getElementById('settingGymEquipment')?.value;
+  const profileName = document.getElementById('settingProfileName')?.value || 'default_user';
+  if (profileName !== API_USER) {
+    localStorage.setItem('workout_user_id', profileName);
+    window.location.reload();
+    return;
+  }
 
   if (statusEl) statusEl.textContent = 'Saving configuration...';
 
   try {
-    const res = await fetch('/api/settings', {
+    const res = await fetch(`/api/settings?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ollama_base_url: ollamaUrl,
+      body: JSON.stringify({ user_id: API_USER, ollama_base_url: ollamaUrl,
         sparky_base_url: sparkyUrl,
         sparky_api_token: sparkyToken,
         selected_ollama_model: selectedModel,
@@ -292,10 +300,10 @@ window.refreshAvailableModels = async function() {
   const select = document.getElementById('settingOllamaModel');
   if (select) select.innerHTML = '<option>Loading...</option>';
   try {
-    const res = await fetch('/api/settings/test-connection', {
+    const res = await fetch(`/api/settings/test-connection?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ollama_base_url: ollamaUrl })
+      body: JSON.stringify({ user_id: API_USER, ollama_base_url: ollamaUrl })
     });
     const data = await res.json();
     if (data.ollama && data.ollama.status === 'success' && data.ollama.models) {
@@ -322,7 +330,7 @@ window.refreshAvailableModels = async function() {
 
 async function fetchExercises() {
   try {
-    const res = await fetch('/api/exercises');
+    const res = await fetch(`/api/exercises?user_id=${API_USER}`);
     const data = await res.json();
     state.exercises = data.data || [];
     renderExercisePicker();
@@ -501,10 +509,10 @@ window.addNewExercise = async function() {
   }
 
   try {
-    const res = await fetch('/api/exercises', {
+    const res = await fetch(`/api/exercises?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, category, primary_muscle, is_custom: true }),
+      body: JSON.stringify({ user_id: API_USER, name, category, primary_muscle, is_custom: true }),
     });
     if (!res.ok) throw new Error('Failed to create exercise');
     const created = await res.json();
@@ -528,7 +536,7 @@ async function loadRoutines() {
   if (listEl) listEl.innerHTML = '<p style="color:var(--color-text-muted);">Loading routines...</p>';
 
   try {
-    const res = await fetch('/api/routines');
+    const res = await fetch(`/api/routines?user_id=${API_USER}`);
     const data = await res.json();
     state.routines = data.data || [];
     renderRoutines();
@@ -813,10 +821,10 @@ window.requestProgressionSuggestion = async function() {
   if (badge) badge.textContent = 'Analyzing overload...';
 
   try {
-    const res = await fetch('/api/workouts/suggest', {
+    const res = await fetch(`/api/workouts/suggest?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ exercise_ids: [exerciseId] }),
+      body: JSON.stringify({ user_id: API_USER, exercise_ids: [exerciseId] }),
     });
     const data = await res.json();
     const suggestion = data.suggestions?.[0];
@@ -881,7 +889,7 @@ window.logCompletedSet = async function() {
   appendSetToUI(setPayload, rawWeightInput, unitPref);
 
   try {
-    const res = await fetch('/api/workouts/sets', {
+    const res = await fetch(`/api/workouts/sets?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(setPayload),
@@ -942,10 +950,10 @@ async function loadCoachingInsights() {
   if (container) container.innerHTML = '<p style="color:var(--color-text-muted);">Consulting Ollama coach and Sparky macros...</p>';
 
   try {
-    const res = await fetch('/api/coaching/feedback', {
+    const res = await fetch(`/api/coaching/feedback?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ user_id: API_USER, }),
     });
     const data = await res.json();
     const insights = data.insights || [];
@@ -1017,7 +1025,7 @@ document.addEventListener('DOMContentLoaded', () => {
 async function deleteRoutine(id) {
   // removed confirm
   try {
-    const res = await fetch(`/api/routines?id=${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/routines?id=${id}&user_id=${API_USER}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete routine');
     await loadRoutines();
   } catch (err) {
@@ -1033,10 +1041,10 @@ async function startRoutineWorkout(routineId) {
   if (!routine) return;
   
   try {
-    const res = await fetch('/api/workouts/sessions', {
+    const res = await fetch(`/api/workouts/sessions?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ routine_id: routineId, name: routine.title })
+      body: JSON.stringify({ user_id: API_USER, routine_id: routineId, name: routine.title })
     });
     const session = await res.json();
     state.activeSessionId = session.id;
@@ -1155,11 +1163,10 @@ async function logSet(sessionId, domPrefixId, exerciseId, setNumber, btnEl, rest
   }
 
   try {
-    const res = await fetch('/api/workouts/sets', {
+    const res = await fetch(`/api/workouts/sets?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        workout_session_id: sessionId,
+      body: JSON.stringify({ user_id: API_USER, workout_session_id: sessionId,
         exercise_id: exerciseId,
         set_number: setNumber,
         weight: parseFloat(weight),
@@ -1189,10 +1196,10 @@ async function finishWorkout() {
   if (!confirm("Are you ready to finish this workout?")) return;
   
   try {
-    const res = await fetch(`/api/workouts/sessions/${state.activeSessionId}`, {
+    const res = await fetch(`/api/workouts/sessions/${state.activeSessionId}?user_id=${API_USER}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'completed', ended_at: new Date().toISOString() })
+      body: JSON.stringify({ user_id: API_USER, status: 'completed', ended_at: new Date().toISOString() })
     });
     
     if (workoutTimerInterval) clearInterval(workoutTimerInterval);
@@ -1211,7 +1218,7 @@ async function loadHistory() {
   const container = document.getElementById('historyList');
   container.innerHTML = '<div style="text-align: center; padding: 20px;">Loading history...</div>';
   try {
-    const res = await fetch('/api/workouts/sessions');
+    const res = await fetch(`/api/workouts/sessions?user_id=${API_USER}`);
     const data = await res.json();
     
     if (data.data.length === 0) {
@@ -1253,7 +1260,7 @@ async function toggleHistoryDetails(sessionId) {
   detailsEl.style.display = 'block';
   
   try {
-    const res = await fetch(`/api/workouts/sessions/details?id=${sessionId}`);
+    const res = await fetch(`/api/workouts/sessions/details?id=${sessionId}&user_id=${API_USER}`);
     const data = await res.json();
     
     if (!data.exercises || data.exercises.length === 0) {
@@ -1296,10 +1303,10 @@ async function sendCoachMessage() {
   const typingId = appendChatMessage('Coach is thinking...', 'coach', true);
   
   try {
-    const res = await fetch('/api/coaching/chat', {
+    const res = await fetch(`/api/coaching/chat?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: chatHistory })
+      body: JSON.stringify({ user_id: API_USER, messages: chatHistory })
     });
     const data = await res.json();
     
@@ -1415,10 +1422,10 @@ window.stopRestTimer = function() {
 
 async function fetchAISuggestionForRoutine(exerciseIds, exercises) {
   try {
-    const res = await fetch('/api/workouts/suggest', {
+    const res = await fetch(`/api/workouts/suggest?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ exercise_ids: exerciseIds })
+      body: JSON.stringify({ user_id: API_USER, exercise_ids: exerciseIds })
     });
     const data = await res.json();
     if (res.ok && data.suggestions) {

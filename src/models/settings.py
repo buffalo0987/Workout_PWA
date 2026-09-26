@@ -7,8 +7,9 @@ import sqlite3
 from typing import Optional, Dict, Any
 
 class SettingsRepository:
-    def __init__(self, db_path: str = "workout_app.db"):
+    def __init__(self, db_path: str = "workout_app.db", user_id: str = "default_user"):
         self.db_path = db_path
+        self.user_id = user_id
 
     def _get_connection(self):
         return sqlite3.connect(self.db_path)
@@ -16,7 +17,7 @@ class SettingsRepository:
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+            cursor.execute("SELECT value FROM user_settings WHERE user_id = ? AND key = ?", (self.user_id, key,))
             row = cursor.fetchone()
             if row:
                 return row[0]
@@ -26,19 +27,19 @@ class SettingsRepository:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO app_settings (key, value, description, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET
+                INSERT INTO user_settings (user_id, key, value, description, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, key) DO UPDATE SET
                     value = excluded.value,
-                    description = COALESCE(excluded.description, app_settings.description),
+                    description = COALESCE(excluded.description, user_settings.description),
                     updated_at = CURRENT_TIMESTAMP
-            """, (key, value, description))
+            """, (self.user_id, key, value, description))
             conn.commit()
 
     def get_all_settings(self) -> Dict[str, str]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT key, value FROM app_settings")
+            cursor.execute("SELECT key, value FROM user_settings WHERE user_id = ?", (self.user_id,))
             rows = cursor.fetchall()
             return {r[0]: r[1] for r in rows}
 
