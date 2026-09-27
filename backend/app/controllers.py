@@ -469,7 +469,7 @@ def get_past_exercise_history(exercise_id: str, limit_sessions: int = 3) -> List
         rows = cursor.fetchall()
         return [dict(r) for r in rows]
 
-def get_recent_sparky_nutrition_averages(days: int = 3) -> Dict[str, float]:
+def get_recent_sparky_nutrition_averages(user_id: str = "default_user", days: int = 3) -> Dict[str, float]:
     today = datetime.now(timezone.utc)
     total_cals = 0.0
     total_protein = 0.0
@@ -512,7 +512,7 @@ def suggest_workout_progression(data: Dict[str, Any]) -> Dict[str, Any]:
     unit = settings_repo.get_unit_preference("lbs")
 
     # 1. Fetch 3-day Sparky nutrition summary
-    nutrition_avg = get_recent_sparky_nutrition_averages(days=3)
+    nutrition_avg = get_recent_sparky_nutrition_averages(user_id=user_id, days=3)
 
     suggestions = []
 
@@ -708,6 +708,53 @@ Respond in JSON format with key "insights" containing an array of exactly 3 bull
 
     return result
 
+def get_recent_workout_history_summary(user_id: str = "default_user", limit: int = 5) -> str:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, name, started_at, status 
+            FROM workout_sessions 
+            WHERE user_id = ? 
+            ORDER BY started_at DESC 
+            LIMIT ?
+        """, (user_id, limit))
+        sessions = [dict(r) for r in cursor.fetchall()]
+        if not sessions:
+            return "No recorded workout sessions yet."
+        
+        summary = []
+        for s in sessions:
+            date_str = str(s.get("started_at", ""))[:10]
+            name = s.get("name") or "Workout"
+            cursor.execute("""
+                SELECT e.name as ex_name, es.set_number, es.weight, es.reps, es.rpe
+                FROM exercise_sets es
+                JOIN workout_exercises we ON es.workout_exercise_id = we.id
+                JOIN exercises e ON we.exercise_id = e.id
+                WHERE we.workout_session_id = ? AND es.is_completed = 1
+                ORDER BY we.order_index ASC, es.set_number ASC
+            """, (s["id"],))
+            sets = [dict(r) for r in cursor.fetchall()]
+            
+            ex_map = {}
+            for st in sets:
+                ex_n = st["ex_name"]
+                if ex_n not in ex_map:
+                    ex_map[ex_n] = []
+                rpe_str = f" @ RPE {st['rpe']}" if st.get('rpe') else ""
+                ex_map[ex_n].append(f"{st['weight']}x{st['reps']}{rpe_str}")
+                
+            ex_summary_list = []
+            for ex_n, set_strs in ex_map.items():
+                ex_summary_list.append(f"  - {ex_n}: {', '.join(set_strs)}")
+                
+            if ex_summary_list:
+                summary.append(f"Session '{name}' on {date_str}:\n" + "\n".join(ex_summary_list))
+            else:
+                summary.append(f"Session '{name}' on {date_str} (no completed sets logged)")
+                
+        return "\n\n".join(summary)
+
 # -----------------------------------------------------------------------------
 # AI Coach Chat (/api/coaching/chat)
 # -----------------------------------------------------------------------------
@@ -719,23 +766,55 @@ def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
     settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
     active_model = data.get("model") or settings_repo.get_selected_ollama_model("qwen3:14b")
     ollama_url = settings_repo.get_ollama_base_url()
+    unit = settings_repo.get_unit_preference("lb")
 
     routines = list_routines(user_id)
     routines_context = json.dumps(routines, indent=2)
+    history_context = get_recent_workout_history_summary(user_id=user_id, limit=5)
     
     gym_equipment = settings_repo.get_setting("gym_equipment", "")
-    equip_constraint = f"\nCRITICAL: The athlete ONLY has access to the following equipment: {gym_equipment}\nDo NOT suggest any exercises that require equipment outside of this list." if gym_equipment else ""
+    equip_constraint = f"\nCRITICAL EQUIPMENT CONSTRAINT: The athlete ONLY has access to the following equipment: {gym_equipment}\nDo NOT suggest any exercises that require equipment outside of this list." if gym_equipment else ""
+
+    sparky_summary = ""
+    try:
+        if settings_repo.get_sparky_base_url() and settings_repo.get_sparky_api_token():
+            nutr = get_recent_sparky_nutrition_averages(user_id=user_id, days=3)
+            if nutr.get("days_averaged", 0) > 0:
+                sparky_summary = f"\nRecent Nutrition (3-day SparkyFitness average):\n- Calories: {nutr['avg_calories']} kcal/day\n- Protein: {nutr['avg_protein_g']}g/day\n- Carbs: {nutr['avg_carbs_g']}g/day\n- Fat: {nutr['avg_fat_g']}g/day\n"
+    except Exception:
+        pass
 
     prompt = f"""
-You are an expert, encouraging, and highly analytical AI strength coach. The athlete is asking for advice, routine modifications, or new routines.
+You are an expert, encouraging, and highly analytical AI strength and hypertrophy coach. The athlete is asking for advice, feedback on progress, routine modifications, or new routines.
+
+Current Athlete Profile & Settings:
+- Weight Unit: {unit}
+{equip_constraint}{sparky_summary}
+
+Recent Completed Workout History (Last 5 Sessions):
+{history_context}
 
 Current Routines Data:
-{routines_context}{equip_constraint}
+{routines_context}
 
 Your capabilities:
-You can provide a conversational response. If the user asks for new routines or modifications, you MUST provide them by returning a JSON object containing an array of 'new_routines' or 'modified_routines'. If no changes are needed, just return 'message'.
+You can provide a conversational response. If the user asks for new routines or modifications, you MUST provide them by returning a JSON object containing an array of 'routines_to_create', 'routines_to_update', or 'routines_to_delete'. If no routine changes are needed, just return 'message'.
+
+USING ATHLETE DATA:
+You have direct visibility into the athlete's Recent Completed Workout History above. Reference their real logged weights, sets, reps, and RPE when answering questions, analyzing performance, spotting plateaus, celebrating PRs, or suggesting weight progressions. If their logged nutrition is available, compare their intake against their stated goals (e.g. bulking vs cutting).
 
 CRITICAL SCHEDULING RULE: If you are generating or modifying multiple routines, you MUST NEVER schedule them on the same day. Ensure absolutely zero overlap in the 'schedule_days' arrays across all routines (e.g. if Routine A is on Friday, Routine B cannot be on Friday).
+
+BIOMECHANICAL EXERCISE SEQUENCING (COMPOUND FIRST):
+When creating or modifying routines, you MUST sequence exercises in strict order of physiological demand:
+1. Primary Heavy Compound Lifts first (e.g. Barbell Squat, Deadlift, Barbell Bench Press, Overhead Press) when the central nervous system is fresh and stabilizer fatigue is minimal.
+2. Secondary Compound / Free-Weight Accessory Lifts second (e.g. Incline Dumbbell Press, Romanian Deadlift, Dumbbell Rows, Dips, Pull-Ups).
+3. Isolation / Single-Joint Movements third (e.g. Cable Lateral Raises, Bicep Curls, Tricep Extensions, Leg Extensions).
+4. Core / Calves / Direct Abs last.
+NEVER place heavy compound barbell movements at the end of a session after isolation work.
+
+STRUCTURAL BALANCE & INJURY PREVENTION:
+For upper-body routines, maintain a balanced 1:1 or 1.5:1 Pull-to-Push ratio (for every horizontal or vertical pressing movement, ensure adequate rowing or rear-delt work to protect shoulder mechanics and posture).
 
 EXPERT COACHING PRINCIPLES:
 1. Progressive Overload: Do not arbitrarily swap out exercises every single week. True strength and hypertrophy come from mastering compound movements. If an athlete plateaus, suggest manipulating target_sets, min_reps, or max_reps instead of randomly changing the movement.
@@ -758,10 +837,22 @@ Return ONLY valid JSON in this exact format:
       "description": "...",
       "schedule_days": ["Monday", "Wednesday"],
       "exercises": [
-         {{"exercise_id": "UUID-from-DB-if-known-or-leave-blank", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90, "name": "Bench Press"}}
+         {{"exercise_id": "UUID-from-DB-if-known-or-leave-blank", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90, "name": "Barbell Bench Press"}}
       ]
     }}
-  ]
+  ],
+  "routines_to_update": [
+    {{
+      "id": "existing-routine-uuid",
+      "title": "Updated Title",
+      "description": "Updated Description",
+      "schedule_days": ["Monday", "Thursday"],
+      "exercises": [
+         {{"exercise_id": "UUID-from-DB-if-known-or-leave-blank", "target_sets": 4, "min_reps": 6, "max_reps": 8, "rest_seconds": 120, "name": "Squat"}}
+      ]
+    }}
+  ],
+  "routines_to_delete": ["routine-uuid-to-delete"]
 }}
 
 To match exercises, use general names. If the user wants a new routine, generate the exercises array with common names (like "Barbell Bench Press", "Squat", "Pull Up") in the 'name' field if you don't know the ID.
