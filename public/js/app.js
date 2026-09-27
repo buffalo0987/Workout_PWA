@@ -150,7 +150,7 @@ async function loadSettings() {
   if (statusEl) statusEl.textContent = 'Loading server settings...';
 
   try {
-    const res = await fetch(`/api/settings?user_id=${targetUserId}`);
+    const res = await fetch(`/api/settings?user_id=${API_USER}`);
     const data = await res.json();
     state.settings = data.settings || {}; state.settings.unit_preference = data.unit_preference || "kg";
     state.availableModels = data.available_models || [];
@@ -202,7 +202,7 @@ window.testOllamaConnection = async function() {
     const res = await fetch(`/api/settings/test-connection?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, ollama_base_url: ollamaUrl })
+      body: JSON.stringify({ user_id: API_USER, ollama_base_url: ollamaUrl })
     });
     const data = await res.json();
     const result = data.ollama;
@@ -227,7 +227,7 @@ window.testSparkyConnection = async function() {
     const res = await fetch(`/api/settings/test-connection?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, sparky_base_url: sparkyUrl, sparky_api_token: sparkyToken })
+      body: JSON.stringify({ user_id: API_USER, sparky_base_url: sparkyUrl, sparky_api_token: sparkyToken })
     });
     const data = await res.json();
     const result = data.sparky;
@@ -306,7 +306,7 @@ window.refreshAvailableModels = async function() {
     const res = await fetch(`/api/settings/test-connection?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, ollama_base_url: ollamaUrl })
+      body: JSON.stringify({ user_id: API_USER, ollama_base_url: ollamaUrl })
     });
     const data = await res.json();
     if (data.ollama && data.ollama.status === 'success' && data.ollama.models) {
@@ -515,7 +515,7 @@ window.addNewExercise = async function() {
     const res = await fetch(`/api/exercises?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, name, category, primary_muscle, is_custom: true }),
+      body: JSON.stringify({ user_id: API_USER, name, category, primary_muscle, is_custom: true }),
     });
     if (!res.ok) throw new Error('Failed to create exercise');
     const created = await res.json();
@@ -827,7 +827,7 @@ window.requestProgressionSuggestion = async function() {
     const res = await fetch(`/api/workouts/suggest?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, exercise_ids: [exerciseId] }),
+      body: JSON.stringify({ user_id: API_USER, exercise_ids: [exerciseId] }),
     });
     const data = await res.json();
     const suggestion = data.suggestions?.[0];
@@ -956,7 +956,7 @@ async function loadCoachingInsights() {
     const res = await fetch(`/api/coaching/feedback?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, }),
+      body: JSON.stringify({ user_id: API_USER, }),
     });
     const data = await res.json();
     const insights = data.insights || [];
@@ -1047,7 +1047,7 @@ async function startRoutineWorkout(routineId) {
     const res = await fetch(`/api/workouts/sessions?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, routine_id: routineId, name: routine.title })
+      body: JSON.stringify({ user_id: API_USER, routine_id: routineId, name: routine.title })
     });
     const session = await res.json();
     state.activeSessionId = session.id;
@@ -1169,7 +1169,7 @@ async function logSet(sessionId, domPrefixId, exerciseId, setNumber, btnEl, rest
     const res = await fetch(`/api/workouts/sets?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, workout_session_id: sessionId,
+      body: JSON.stringify({ user_id: API_USER, workout_session_id: sessionId,
         exercise_id: exerciseId,
         set_number: setNumber,
         weight: parseFloat(weight),
@@ -1202,7 +1202,7 @@ async function finishWorkout() {
     const res = await fetch(`/api/workouts/sessions/${state.activeSessionId}?user_id=${API_USER}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, status: 'completed', ended_at: new Date().toISOString() })
+      body: JSON.stringify({ user_id: API_USER, status: 'completed', ended_at: new Date().toISOString() })
     });
     
     if (workoutTimerInterval) clearInterval(workoutTimerInterval);
@@ -1309,7 +1309,7 @@ async function sendCoachMessage() {
     const res = await fetch(`/api/coaching/chat?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, messages: chatHistory })
+      body: JSON.stringify({ user_id: API_USER, messages: chatHistory })
     });
     const data = await res.json();
     
@@ -1428,7 +1428,7 @@ async function fetchAISuggestionForRoutine(exerciseIds, exercises) {
     const res = await fetch(`/api/workouts/suggest?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: targetUserId, exercise_ids: exerciseIds })
+      body: JSON.stringify({ user_id: API_USER, exercise_ids: exerciseIds })
     });
     const data = await res.json();
     if (res.ok && data.suggestions) {
