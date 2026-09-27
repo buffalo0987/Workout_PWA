@@ -8,5 +8,7 @@ services:
       - "8000:8000"
     volumes:
       # Mount the database file to persist data across container restarts
-      - ./workout_app.db:/app/workout_app.db
+      - ./data:/app/data
+    environment:
+      - DB_PATH=data/workout_app.db
     restart: unless-stopped
