@@ -178,6 +178,14 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         try:
+
+            if path == "/api/settings/data":
+                user_id = query.get("user_id", ["default_user"])[0]
+                from backend.app.controllers import delete_all_user_data
+                res = delete_all_user_data(user_id)
+                self._send_json(200, res)
+                return
+
             if path == "/api/routines":
                 routine_id = query.get("id", [None])[0]
                 if routine_id:

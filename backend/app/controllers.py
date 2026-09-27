@@ -824,3 +824,22 @@ To match exercises, use general names. If the user wants a new routine, generate
         "model_used": ollama_res.get("model", active_model),
     }
 
+
+
+def delete_all_user_data(user_id: str) -> dict:
+    if not user_id:
+        return {"error": "user_id required"}
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Delete routines (routine_exercises should cascade or be orphaned if not, but let's delete explicitly if needed)
+        cursor.execute("DELETE FROM routines WHERE user_id = ?", (user_id,))
+        # Delete workout sessions
+        cursor.execute("DELETE FROM workout_sessions WHERE user_id = ?", (user_id,))
+        # Delete user settings
+        cursor.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+        # Delete ai recommendations
+        cursor.execute("DELETE FROM ai_recommendations WHERE user_id = ?", (user_id,))
+        # Delete nutrition logs
+        cursor.execute("DELETE FROM nutrition_logs WHERE user_id = ?", (user_id,))
+        conn.commit()
+    return {"status": "success", "message": f"All data for {user_id} deleted."}

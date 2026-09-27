@@ -1452,3 +1452,21 @@ async function fetchAISuggestionForRoutine(exerciseIds, exercises) {
     console.warn("Could not prepopulate", e);
   }
 }
+
+window.deleteAllUserData = async function() {
+  if (confirm("Are you ABSOLUTELY sure you want to permanently delete ALL of your routines, workouts, and settings?\n\nThis action cannot be undone.")) {
+    try {
+      const res = await fetch(`/api/settings/data?user_id=${API_USER}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        alert("All your data has been successfully deleted.");
+        window.location.reload();
+      } else {
+        alert("Failed to delete data. Server returned an error.");
+      }
+    } catch(e) {
+      alert("Network error while trying to delete data.");
+    }
+  }
+};
