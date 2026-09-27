@@ -75,8 +75,9 @@ def test_service_connections(data: Optional[Dict[str, Any]] = None) -> Dict[str,
     Tests live HTTP network connectivity to configured Ollama and SparkyFitness servers.
     Returns status, latency (ms), and diagnostic details for each.
     """
-    repo = SettingsRepository(DB_PATH, user_id=user_id)
     data = data or {}
+    user_id = data.get("user_id", "default_user")
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
     
     ollama_url = (data.get("ollama_base_url") or repo.get_ollama_base_url()).rstrip("/")
     sparky_url = (data.get("sparky_base_url") or repo.get_sparky_base_url()).rstrip("/")
