@@ -743,6 +743,12 @@ EXPERT COACHING PRINCIPLES:
 3. Recovery & CNS Fatigue: Strongly advise against training more than 5 days a week. Muscles grow during recovery, not in the gym.
 4. Nutrition Alignment: If an athlete's goal is hypertrophy or weight gain, remind them that training must be paired with a caloric surplus and sufficient protein (approx 0.8-1g per lb of bodyweight).
 
+INDUSTRY STANDARDS FOR GOALS:
+When generating the JSON for `min_reps`, `max_reps`, and `rest_seconds`, you MUST adhere to the following scientifically established standards based on the user's primary goal:
+- Strength: 1-5 reps, 3-6 sets, 120-300 seconds rest.
+- Hypertrophy (Muscle Size): 6-12 reps, 3-5 sets, 60-120 seconds rest.
+- Endurance: 15+ reps, 2-3 sets, 30-60 seconds rest.
+
 Return ONLY valid JSON in this exact format:
 {{
   "message": "Your conversational response here, formatted in markdown. Explain what you've done or answer the question.",
