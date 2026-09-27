@@ -5,12 +5,16 @@
 -- =============================================================================
 
 -- 1. Key-Value Settings Table
-CREATE TABLE IF NOT EXISTS app_settings (
-    key VARCHAR(128) PRIMARY KEY,
-    value TEXT NOT NULL,
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id VARCHAR(36) NOT NULL,
+    key VARCHAR(255) NOT NULL,
+    value TEXT,
     description TEXT,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, key)
 );
+
 
 -- Seed Default Settings
 INSERT OR IGNORE INTO app_settings (key, value, description)
