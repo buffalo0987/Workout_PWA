@@ -289,6 +289,9 @@ window.saveSettings = async function() {
     if (statusEl) {
       statusEl.innerHTML = '<span style="color: var(--color-accent);">✓ Settings successfully saved to database!</span>';
     }
+    if (profileChanged) {
+      window.location.reload();
+    }
   } catch (e) {
     console.error('[Settings] Save error:', e);
     if (statusEl) {
