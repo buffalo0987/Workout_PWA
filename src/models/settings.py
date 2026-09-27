@@ -67,7 +67,7 @@ class SettingsRepository:
     def set_sparky_api_token(self, token: str):
         self.set_setting("sparky_api_token", token, "Bearer token for authenticating with SparkyFitness API")
 
-    def get_unit_preference(self, fallback: str = "lbs") -> str:
+    def get_unit_preference(self, fallback: str = "lb") -> str:
         return self.get_setting("default_unit_preference", fallback)
 
     def set_unit_preference(self, unit: str):

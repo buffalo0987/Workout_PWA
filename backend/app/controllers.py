@@ -50,7 +50,7 @@ def get_app_settings(user_id: str = 'default_user') -> Dict[str, Any]:
         "ollama_base_url": ollama_url,
         "sparky_base_url": repo.get_sparky_base_url(),
         "sparky_api_token": repo.get_sparky_api_token(),
-        "unit_preference": repo.get_unit_preference("lbs")
+        "unit_preference": repo.get_unit_preference("lb")
     }
 
 def update_app_settings(data: Dict[str, Any]) -> Dict[str, Any]:
