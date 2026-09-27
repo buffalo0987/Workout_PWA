@@ -608,10 +608,10 @@ Return JSON with exact keys:
 # Coaching Feedback Endpoint (/api/coaching/feedback)
 # -----------------------------------------------------------------------------
 
-def get_weekly_volume_and_nutrition() -> Dict[str, Any]:
+def get_weekly_volume_and_nutrition(user_id: str = "default_user") -> Dict[str, Any]:
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     repo = SettingsRepository(DB_PATH, user_id=user_id)
-    unit = repo.get_unit_preference("lbs")
+    unit = repo.get_unit_preference("lb")
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -621,14 +621,16 @@ def get_weekly_volume_and_nutrition() -> Dict[str, Any]:
                 SUM(es.weight * es.reps) as total_volume_tonnage,
                 AVG(es.rpe) as avg_rpe
             FROM exercise_sets es
-            WHERE es.completed_at >= ? AND es.is_completed = 1
-        """, (seven_days_ago,))
+            JOIN workout_exercises we ON es.workout_exercise_id = we.id
+            JOIN workout_sessions ws ON we.workout_session_id = ws.id
+            WHERE ws.user_id = ? AND es.completed_at >= ? AND es.is_completed = 1
+        """, (user_id, seven_days_ago))
         row = cursor.fetchone()
         sets_count = row["total_sets"] or 0
         volume = float(row["total_volume_tonnage"] or 0.0)
         avg_rpe = float(row["avg_rpe"] or 8.0)
 
-    nutrition = get_recent_sparky_nutrition_averages(days=7)
+    nutrition = get_recent_sparky_nutrition_averages(user_id=user_id, days=7)
 
     return {
         "weekly_sets": sets_count,
@@ -637,6 +639,129 @@ def get_weekly_volume_and_nutrition() -> Dict[str, Any]:
         "average_rpe": round(avg_rpe, 1),
         "weekly_nutrition": nutrition
     }
+
+def get_weekly_muscle_volume(user_id: str = "default_user") -> Dict[str, Any]:
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
+    unit = repo.get_unit_preference("lb")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                COALESCE(NULLIF(e.primary_muscle, ''), 'Other') as muscle,
+                COUNT(es.id) as set_count,
+                ROUND(SUM(es.weight * es.reps), 1) as total_volume
+            FROM exercise_sets es
+            JOIN workout_exercises we ON es.workout_exercise_id = we.id
+            JOIN exercises e ON we.exercise_id = e.id
+            JOIN workout_sessions ws ON we.workout_session_id = ws.id
+            WHERE ws.user_id = ? AND es.completed_at >= ? AND es.is_completed = 1
+            GROUP BY muscle
+            ORDER BY set_count DESC
+        """, (user_id, seven_days_ago))
+        rows = [dict(r) for r in cursor.fetchall()]
+        
+        # Categorize against scientific hypertrophy volume landmarks (10-20 sets/week)
+        results = []
+        for r in rows:
+            cnt = r["set_count"]
+            if cnt < 10:
+                status = "maintenance"
+                badge = "Maintenance (<10)"
+                color = "var(--color-warning)"
+            elif 10 <= cnt <= 20:
+                status = "optimal"
+                badge = "Optimal Zone (10-20)"
+                color = "var(--color-success)"
+            else:
+                status = "high"
+                badge = "High Volume (20+)"
+                color = "var(--color-danger)"
+            results.append({
+                "muscle": r["muscle"].title(),
+                "sets": cnt,
+                "volume": r["total_volume"] or 0.0,
+                "status": status,
+                "badge": badge,
+                "color": color
+            })
+            
+        cursor.execute("""
+            SELECT COUNT(es.id) as total_sets, SUM(es.weight * es.reps) as total_vol
+            FROM exercise_sets es
+            JOIN workout_exercises we ON es.workout_exercise_id = we.id
+            JOIN workout_sessions ws ON we.workout_session_id = ws.id
+            WHERE ws.user_id = ? AND es.completed_at >= ? AND es.is_completed = 1
+        """, (user_id, seven_days_ago))
+        tot = cursor.fetchone()
+        
+        return {
+            "unit": unit,
+            "total_weekly_sets": tot["total_sets"] or 0,
+            "total_weekly_volume": round(tot["total_vol"] or 0.0, 1),
+            "muscles": results
+        }
+
+def get_strength_records(user_id: str = "default_user") -> List[Dict[str, Any]]:
+    repo = SettingsRepository(DB_PATH, user_id=user_id)
+    unit = repo.get_unit_preference("lb")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                e.id as exercise_id,
+                e.name as exercise_name,
+                es.weight,
+                es.reps,
+                ROUND(es.weight * (1.0 + (CAST(es.reps AS FLOAT) / 30.0)), 1) as est_1rm,
+                es.completed_at
+            FROM exercise_sets es
+            JOIN workout_exercises we ON es.workout_exercise_id = we.id
+            JOIN exercises e ON we.exercise_id = e.id
+            JOIN workout_sessions ws ON we.workout_session_id = ws.id
+            WHERE ws.user_id = ? AND es.is_completed = 1 AND es.reps >= 1 AND es.reps <= 15 AND es.weight > 0
+            ORDER BY est_1rm DESC
+        """, (user_id,))
+        all_sets = [dict(r) for r in cursor.fetchall()]
+        
+        seen = set()
+        records = []
+        for s in all_sets:
+            eid = s["exercise_id"]
+            if eid not in seen:
+                seen.add(eid)
+                records.append({
+                    "exercise_id": eid,
+                    "exercise_name": s["exercise_name"],
+                    "best_weight": s["weight"],
+                    "best_reps": s["reps"],
+                    "est_1rm": s["est_1rm"],
+                    "unit": unit,
+                    "date": str(s["completed_at"])[:10] if s.get("completed_at") else ""
+                })
+                
+        return records[:8]
+
+def swap_workout_exercise(data: Dict[str, Any]) -> Dict[str, Any]:
+    session_id = data.get("workout_session_id")
+    old_exercise_id = data.get("old_exercise_id")
+    new_exercise_id = data.get("new_exercise_id")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if session_id and old_exercise_id and new_exercise_id:
+            cursor.execute("""
+                UPDATE workout_exercises 
+                SET exercise_id = ? 
+                WHERE workout_session_id = ? AND exercise_id = ?
+            """, (new_exercise_id, session_id, old_exercise_id))
+            conn.commit()
+            
+        cursor.execute("SELECT id, name, category, primary_muscle, equipment, images FROM exercises WHERE id = ?", (new_exercise_id,))
+        new_ex = cursor.fetchone()
+        return dict(new_ex) if new_ex else {"id": new_exercise_id}
 
 def generate_coaching_feedback(data: Dict[str, Any]) -> Dict[str, Any]:
     user_id = data.get("user_id") or "default_user"

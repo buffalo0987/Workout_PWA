@@ -163,6 +163,20 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, details)
                 return
 
+            if path == "/api/analytics/weekly-volume":
+                user_id = query.get("user_id", ["default_user"])[0]
+                from backend.app.controllers import get_weekly_muscle_volume
+                volume_data = get_weekly_muscle_volume(user_id)
+                self._send_json(200, volume_data)
+                return
+
+            if path == "/api/analytics/strength-records":
+                user_id = query.get("user_id", ["default_user"])[0]
+                from backend.app.controllers import get_strength_records
+                records = get_strength_records(user_id)
+                self._send_json(200, {"records": records})
+                return
+
             if not path.startswith("/api/"):
                 self._serve_static_file(path)
                 return
@@ -269,6 +283,12 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/workouts/sets":
                 logged_set = log_exercise_set(body)
                 self._send_json(201, logged_set)
+                return
+
+            if path == "/api/workouts/swap-exercise":
+                from backend.app.controllers import swap_workout_exercise
+                swapped = swap_workout_exercise(body)
+                self._send_json(200, swapped)
                 return
 
             self._send_json(404, {"error": "Not Found", "path": path})

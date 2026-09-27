@@ -1113,9 +1113,16 @@ function renderActiveWorkout(routine, session) {
       }
       
       exCard.innerHTML = `
-        <div style="padding: 12px 16px; background: rgba(0,0,0,0.15); display: flex; justify-content: space-between; align-items: center;">
-          <h3 style="font-size: 1.05rem; margin: 0; color: var(--color-primary);">${ex.exercise_name || 'Unknown Exercise'}</h3>
-          <span style="font-size: 0.75rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">${ex.target_sets} Sets</span>
+        <div style="padding: 12px 16px; background: rgba(0,0,0,0.2); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.06);">
+          <div>
+            <h3 id="ex_title_${ex.id}" style="font-size: 1.05rem; margin: 0; color: var(--color-primary);">${ex.exercise_name || 'Unknown Exercise'}</h3>
+            <span style="font-size: 0.75rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase;">${ex.target_sets} Sets</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn btn-outline" style="padding: 4px 8px; font-size: 0.75rem; border-color: rgba(255,255,255,0.2);" onclick="openPlateCalcModal(document.getElementById('log_weight_${ex.id}_1')?.value)" title="Barbell Plate Calculator">🧮 Plates</button>
+            <button class="btn btn-outline" style="padding: 4px 8px; font-size: 0.75rem; border-color: rgba(255,255,255,0.2);" onclick="openWarmupModal('${(ex.exercise_name || 'Exercise').replace(/'/g, "\\'")}', document.getElementById('log_weight_${ex.id}_1')?.value)" title="Automated Warmup Ramp">🌡️ Warm-Up</button>
+            <button class="btn btn-outline" style="padding: 4px 8px; font-size: 0.75rem; border-color: rgba(255,255,255,0.2);" onclick="openSwapModal('${ex.exercise_id}', '${ex.id}', '${(ex.exercise_name || 'Exercise').replace(/'/g, "\\'")}')" title="Swap Exercise">🔄 Swap</button>
+          </div>
         </div>
         <table style="width: 100%; text-align: center; border-collapse: collapse; font-size: 0.85rem;">
           <thead>
@@ -1221,6 +1228,9 @@ async function finishWorkout() {
 }
 
 async function loadHistory() {
+  loadWeeklyVolumeLandmarks();
+  loadStrengthRecords();
+
   const container = document.getElementById('historyList');
   container.innerHTML = '<div style="text-align: center; padding: 20px;">Loading history...</div>';
   try {
@@ -1375,6 +1385,50 @@ function appendChatMessage(text, sender, isTyping = false) {
 
 let restTimerInterval = null;
 let wakeLock = null;
+let isRestTimerMuted = localStorage.getItem('workout_timer_mute') === 'true';
+
+window.toggleRestTimerMute = function() {
+  isRestTimerMuted = !isRestTimerMuted;
+  localStorage.setItem('workout_timer_mute', isRestTimerMuted ? 'true' : 'false');
+  const btn = document.getElementById('restTimerMuteBtn');
+  if (btn) btn.textContent = isRestTimerMuted ? '🔕' : '🔔';
+};
+
+function playRestTimerChime() {
+  if (isRestTimerMuted) return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    
+    // Tone 1: 587.33 Hz (D5) - warm bell attack
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0.25, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.35);
+
+    // Tone 2: 880 Hz (A5) - bright confirmation chime
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880.0, now + 0.14);
+    gain2.gain.setValueAtTime(0.35, now + 0.14);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.14);
+    osc2.stop(now + 0.65);
+  } catch (err) {
+    console.warn('[Timer] Web Audio chime unavailable:', err);
+  }
+}
 
 window.startRestTimer = async function(seconds = 90) {
   try {
@@ -1389,6 +1443,8 @@ window.startRestTimer = async function(seconds = 90) {
   const targetTime = Date.now() + (seconds * 1000);
   const banner = document.getElementById('restTimerBanner');
   const display = document.getElementById('restTimerDisplay');
+  const muteBtn = document.getElementById('restTimerMuteBtn');
+  if (muteBtn) muteBtn.textContent = isRestTimerMuted ? '🔕' : '🔔';
   if (!banner || !display) return;
   
   banner.style.display = 'flex';
@@ -1401,6 +1457,8 @@ window.startRestTimer = async function(seconds = 90) {
     if (timeLeft <= 0) {
       clearInterval(restTimerInterval);
       banner.style.display = 'none';
+      
+      playRestTimerChime();
       
       if (window.navigator && window.navigator.vibrate) {
         window.navigator.vibrate([200, 100, 200]);
@@ -1476,3 +1534,403 @@ window.deleteAllUserData = async function() {
     }
   }
 };
+
+// =============================================================================
+// Barbell Plate Calculator Modal Logic
+// =============================================================================
+window.openPlateCalcModal = function(initialWeight) {
+  const modal = document.getElementById('modalPlateCalc');
+  const input = document.getElementById('plateCalcTargetWeight');
+  const barSelect = document.getElementById('plateCalcBarWeight');
+  if (!modal || !input) return;
+  
+  const unit = state.settings?.unit_preference || 'lb';
+  if (barSelect) {
+    barSelect.value = (unit === 'kg') ? '20' : '45';
+  }
+  const parsed = parseFloat(initialWeight);
+  input.value = (!isNaN(parsed) && parsed > 0) ? parsed : (unit === 'kg' ? 60 : 135);
+  modal.style.display = 'flex';
+  calculatePlates();
+};
+
+window.closePlateCalcModal = function() {
+  const modal = document.getElementById('modalPlateCalc');
+  if (modal) modal.style.display = 'none';
+};
+
+window.calculatePlates = function() {
+  const targetWeight = parseFloat(document.getElementById('plateCalcTargetWeight')?.value) || 0;
+  const barWeight = parseFloat(document.getElementById('plateCalcBarWeight')?.value) || 45;
+  const resultsContainer = document.getElementById('plateCalcResults');
+  if (!resultsContainer) return;
+
+  const isKg = (barWeight === 20 || barWeight === 15);
+  const unitLabel = isKg ? 'kg' : 'lb';
+  
+  if (targetWeight <= barWeight) {
+    resultsContainer.innerHTML = `
+      <div style="font-weight: bold; color: var(--color-primary); font-size: 1.1rem; margin-bottom: 4px;">Empty Bar Only</div>
+      <div style="color: var(--color-text-muted); font-size: 0.85rem;">Just the ${barWeight} ${unitLabel} barbell. No plates needed.</div>
+    `;
+    return;
+  }
+
+  const weightPerSide = (targetWeight - barWeight) / 2.0;
+  const availablePlates = isKg 
+    ? [25, 20, 15, 10, 5, 2.5, 1.25] 
+    : [45, 35, 25, 10, 5, 2.5];
+
+  let remaining = weightPerSide;
+  const platesPerSide = [];
+
+  for (const plate of availablePlates) {
+    const count = Math.floor(remaining / plate);
+    if (count > 0) {
+      platesPerSide.push({ plate, count });
+      remaining = Math.round((remaining - (count * plate)) * 100) / 100;
+    }
+  }
+
+  const plateColors = {
+    45: '#ef4444',
+    35: '#3b82f6',
+    25: '#eab308',
+    10: '#22c55e',
+    5: '#94a3b8',
+    2.5: '#1e293b',
+    20: '#3b82f6',
+    15: '#eab308',
+    1.25: '#94a3b8'
+  };
+
+  let visualSleeveHtml = '<div style="display: flex; align-items: center; justify-content: center; gap: 4px; padding: 14px 4px; overflow-x: auto;">';
+  visualSleeveHtml += '<div style="width: 24px; height: 16px; background: #64748b; border-radius: 4px 0 0 4px;" title="Barbell Collar"></div>';
+  visualSleeveHtml += '<div style="width: 10px; height: 32px; background: #94a3b8; border-radius: 2px;" title="Collar Ring"></div>';
+
+  platesPerSide.forEach(item => {
+    for (let c = 0; c < item.count; c++) {
+      const height = Math.min(68, Math.max(28, 24 + item.plate * 0.9));
+      const bg = plateColors[item.plate] || '#3b82f6';
+      visualSleeveHtml += `
+        <div style="height: ${height}px; width: 14px; background: ${bg}; border-radius: 3px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(0,0,0,0.4); box-shadow: 1px 1px 4px rgba(0,0,0,0.3);" title="${item.plate} ${unitLabel}">
+        </div>
+      `;
+    }
+  });
+
+  visualSleeveHtml += '<div style="width: 28px; height: 12px; background: #475569; border-radius: 0 4px 4px 0;" title="Sleeve tip"></div>';
+  visualSleeveHtml += '</div>';
+
+  const breakdownList = platesPerSide.map(p => `<strong>${p.count}×</strong> ${p.plate} ${unitLabel}`).join(', ');
+
+  resultsContainer.innerHTML = `
+    <div style="font-size: 1.2rem; font-weight: bold; color: var(--color-primary); margin-bottom: 2px;">
+      ${weightPerSide} ${unitLabel} <span style="font-size: 0.85rem; font-weight: normal; color: var(--color-text-muted);">per side</span>
+    </div>
+    ${visualSleeveHtml}
+    <div style="font-size: 0.9rem; color: white; margin-top: 6px;">
+      ${breakdownList || 'Exact match with available plates'}
+    </div>
+    ${remaining > 0 ? `<div style="font-size: 0.75rem; color: var(--color-warning); margin-top: 4px;">(${remaining} ${unitLabel} difference from nearest plate)</div>` : ''}
+  `;
+};
+
+// =============================================================================
+// Automated Compound Warm-Up Ramp Generator
+// =============================================================================
+window.openWarmupModal = function(exerciseName, targetWeight) {
+  const modal = document.getElementById('modalWarmupRamp');
+  const content = document.getElementById('warmupModalContent');
+  const title = document.getElementById('warmupModalTitle');
+  if (!modal || !content) return;
+
+  const unit = state.settings?.unit_preference || 'lb';
+  const parsed = parseFloat(targetWeight);
+  const weight = (!isNaN(parsed) && parsed > 0) ? parsed : (unit === 'kg' ? 60 : 135);
+  const barWeight = (unit === 'kg') ? 20 : 45;
+
+  if (title) title.textContent = `🌡️ Warm-Up: ${exerciseName}`;
+
+  const roundIncrement = (unit === 'kg') ? 2.5 : 5;
+  const roundWeight = (w) => Math.max(barWeight, Math.round(w / roundIncrement) * roundIncrement);
+
+  const rampSets = [
+    { name: '1. Bar Groove', pct: 'Empty Bar', weight: barWeight, reps: 10, rest: '45s', note: 'Groove movement pattern & lubricate joints' },
+    { name: '2. Light Primer', pct: '50%', weight: roundWeight(weight * 0.5), reps: 5, rest: '60s', note: 'Move the bar smoothly with speed' },
+    { name: '3. Neural Prep', pct: '75%', weight: roundWeight(weight * 0.75), reps: 3, rest: '90s', note: 'Match your working set setup & breathing' },
+    { name: '4. Potentiation', pct: '90%', weight: roundWeight(weight * 0.9), reps: 1, rest: '120s', note: 'Heavy confidence single. Zero fatigue' }
+  ];
+
+  let tableHtml = `
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left; margin-top: 10px;">
+      <thead>
+        <tr style="color: var(--color-text-muted); font-size: 0.7rem; text-transform: uppercase; border-bottom: 1px solid var(--color-card-border);">
+          <th style="padding: 8px 4px;">Set</th>
+          <th style="padding: 8px 4px;">Weight (${unit})</th>
+          <th style="padding: 8px 4px;">Reps</th>
+          <th style="padding: 8px 4px;">Rest</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  rampSets.forEach((s) => {
+    tableHtml += `
+      <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+        <td style="padding: 10px 4px;">
+          <div style="font-weight: 600; color: white;">${s.name}</div>
+          <div style="font-size: 0.7rem; color: var(--color-text-muted);">${s.note}</div>
+        </td>
+        <td style="padding: 10px 4px; font-weight: bold; color: var(--color-primary); font-size: 1rem;">
+          ${s.weight} <span style="font-size: 0.75rem; font-weight: normal; color: var(--color-text-muted);">${s.pct}</span>
+        </td>
+        <td style="padding: 10px 4px; font-weight: bold;">${s.reps}</td>
+        <td style="padding: 10px 4px; color: var(--color-text-muted);">${s.rest}</td>
+      </tr>
+    `;
+  });
+
+  tableHtml += `
+      </tbody>
+    </table>
+    <div style="margin-top: 14px; font-size: 0.8rem; color: var(--color-text-muted); background: rgba(0,0,0,0.25); padding: 10px; border-radius: 6px; line-height: 1.4;">
+      💡 <strong>Pro Coach Tip:</strong> Warm-up sets do not count towards working volume landmarks. Take 2–3 minutes of rest after your potentiation single before beginning Set 1!
+    </div>
+  `;
+
+  content.innerHTML = tableHtml;
+  modal.style.display = 'flex';
+};
+
+window.closeWarmupModal = function() {
+  const modal = document.getElementById('modalWarmupRamp');
+  if (modal) modal.style.display = 'none';
+};
+
+// =============================================================================
+// Exercise Swap Modal Logic
+// =============================================================================
+let activeSwapContext = null;
+
+window.openSwapModal = async function(currentExerciseId, domPrefixId, currentExerciseName) {
+  const modal = document.getElementById('modalSwapExercise');
+  const listEl = document.getElementById('swapAlternativesList');
+  const subtitle = document.getElementById('swapModalSubtitle');
+  if (!modal || !listEl) return;
+
+  activeSwapContext = { currentExerciseId, domPrefixId, currentExerciseName };
+  if (subtitle) subtitle.textContent = `Finding alternatives for: ${currentExerciseName}`;
+  listEl.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--color-text-muted);">Finding biomechanically matched exercises...</div>';
+  modal.style.display = 'flex';
+
+  try {
+    const exRes = await fetch(`/api/exercises?user_id=${API_USER}`);
+    const exData = await exRes.json();
+    const allExercises = exData.data || [];
+    
+    const curr = allExercises.find(e => e.id === currentExerciseId);
+    const targetMuscle = curr ? curr.primary_muscle : '';
+
+    let matches = allExercises.filter(e => e.id !== currentExerciseId && (!targetMuscle || e.primary_muscle === targetMuscle));
+    
+    if (matches.length === 0) {
+      matches = allExercises.filter(e => e.id !== currentExerciseId).slice(0, 10);
+    }
+
+    const topPicks = matches.slice(0, 3);
+    const remainingPicks = matches.slice(3, 25);
+
+    let html = `
+      <div style="font-size: 0.75rem; font-weight: bold; color: var(--color-text-muted); text-transform: uppercase; margin-bottom: 6px;">
+        Recommended Substitutes (${targetMuscle ? targetMuscle.toUpperCase() : 'TARGET MUSCLE'}):
+      </div>
+    `;
+
+    topPicks.forEach(ex => {
+      const safeName = ex.name.replace(/'/g, "\\'");
+      html += `
+        <div style="background: rgba(255,255,255,0.04); border: 1px solid var(--color-card-border); border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <div style="font-weight: 600; color: white; font-size: 0.9rem;">${ex.name}</div>
+            <div style="font-size: 0.75rem; color: var(--color-text-muted);">${ex.equipment || 'Alternative'} &bull; ${ex.category || 'Movement'}</div>
+          </div>
+          <button class="btn btn-primary" style="padding: 6px 12px; font-size: 0.8rem; flex-shrink: 0;" onclick="applyExerciseSwap('${ex.id}', '${safeName}')">
+            Swap In
+          </button>
+        </div>
+      `;
+    });
+
+    if (remainingPicks.length > 0) {
+      html += `
+        <div style="margin-top: 10px;">
+          <label style="font-size: 0.75rem; color: var(--color-text-muted); display: block; margin-bottom: 4px;">Or choose any other matching movement:</label>
+          <select id="swapSelectOther" class="form-input" style="margin: 0; font-size: 0.85rem;" onchange="if(this.value) { const opt = this.options[this.selectedIndex]; applyExerciseSwap(this.value, opt.text); }">
+            <option value="">-- Browse all options --</option>
+            ${remainingPicks.map(e => `<option value="${e.id}">${e.name} (${e.equipment || 'Equipment'})</option>`).join('')}
+          </select>
+        </div>
+      `;
+    }
+
+    listEl.innerHTML = html;
+
+  } catch(e) {
+    console.error('Swap modal error:', e);
+    listEl.innerHTML = '<div style="color: var(--color-danger); padding: 16px;">Failed to load exercise alternatives.</div>';
+  }
+};
+
+window.closeSwapModal = function() {
+  const modal = document.getElementById('modalSwapExercise');
+  if (modal) modal.style.display = 'none';
+  activeSwapContext = null;
+};
+
+window.applyExerciseSwap = async function(newExerciseId, newExerciseName) {
+  if (!activeSwapContext) return;
+  const { currentExerciseId, domPrefixId } = activeSwapContext;
+
+  try {
+    await fetch('/api/workouts/swap-exercise', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workout_session_id: state.activeWorkoutSession?.id,
+        old_exercise_id: currentExerciseId,
+        new_exercise_id: newExerciseId
+      })
+    });
+
+    if (state.activeRoutine && state.activeRoutine.exercises) {
+      const targetEx = state.activeRoutine.exercises.find(e => e.id === domPrefixId || e.exercise_id === currentExerciseId);
+      if (targetEx) {
+        targetEx.exercise_id = newExerciseId;
+        targetEx.exercise_name = newExerciseName;
+      }
+    }
+
+    const titleEl = document.getElementById(`ex_title_${domPrefixId}`);
+    if (titleEl) {
+      titleEl.textContent = newExerciseName;
+    }
+
+    closeSwapModal();
+
+  } catch (err) {
+    console.error('Failed to swap exercise:', err);
+    alert('Failed to swap exercise on server.');
+  }
+};
+
+// =============================================================================
+// Analytics: Weekly Volume Landmarks & Estimated 1RM Trackers
+// =============================================================================
+async function loadWeeklyVolumeLandmarks() {
+  const container = document.getElementById('historyWeeklyVolume');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`/api/analytics/weekly-volume?user_id=${API_USER}`);
+    const data = await res.json();
+    const muscles = data.muscles || [];
+
+    if (muscles.length === 0) {
+      container.innerHTML = `
+        <div class="card" style="background: rgba(255,255,255,0.02); border: 1px dashed var(--color-card-border); text-align: center; padding: 14px;">
+          <div style="font-weight: 600; font-size: 0.9rem; color: var(--color-primary); margin-bottom: 4px;">📊 Weekly Hypertrophy Volume Tracker</div>
+          <div style="font-size: 0.75rem; color: var(--color-text-muted);">Complete workout sets this week to track your volume against the 10–20 set science benchmark.</div>
+        </div>
+      `;
+      return;
+    }
+
+    let itemsHtml = '';
+    muscles.forEach(m => {
+      const pct = Math.min(100, Math.round((m.sets / 20) * 100));
+      itemsHtml += `
+        <div style="margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span style="font-weight: 600; font-size: 0.85rem; color: white;">${m.muscle}</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 0.85rem; font-weight: bold; color: var(--color-primary);">${m.sets} sets</span>
+              <span style="font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.08); color: ${m.color}; font-weight: bold;">${m.badge}</span>
+            </div>
+          </div>
+          <div style="width: 100%; height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; position: relative;">
+            <div style="width: ${pct}%; height: 100%; background: ${m.color}; border-radius: 4px; transition: width 0.4s ease;"></div>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = `
+      <div class="card" style="border: 1px solid var(--color-card-border);">
+        <div class="card-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h3 class="card-title" style="font-size: 1.05rem;">📊 Weekly Hypertrophy Volume Landmarks</h3>
+            <p class="card-subtitle" style="font-size: 0.75rem;">Optimal hypertrophy growth target: 10 to 20 direct sets / week</p>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 0.95rem; font-weight: bold; color: var(--color-primary);">${data.total_weekly_sets} Sets</div>
+            <div style="font-size: 0.7rem; color: var(--color-text-muted);">${(data.total_weekly_volume || 0).toLocaleString()} ${data.unit} total</div>
+          </div>
+        </div>
+        ${itemsHtml}
+      </div>
+    `;
+
+  } catch (err) {
+    console.warn('Failed to load weekly volume landmarks:', err);
+  }
+}
+
+async function loadStrengthRecords() {
+  const container = document.getElementById('historyStrengthRecords');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`/api/analytics/strength-records?user_id=${API_USER}`);
+    const data = await res.json();
+    const records = data.records || [];
+
+    if (records.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+
+    let cardsHtml = '';
+    records.forEach(r => {
+      cardsHtml += `
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--color-card-border); border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;">
+          <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">
+            <div style="font-weight: 600; font-size: 0.85rem; color: white;">${r.exercise_name}</div>
+            <div style="font-size: 0.7rem; color: var(--color-text-muted);">Best: ${r.best_weight} ${r.unit} × ${r.best_reps} reps ${r.date ? `(${r.date})` : ''}</div>
+          </div>
+          <div style="text-align: right; flex-shrink: 0;">
+            <div style="font-weight: bold; color: var(--color-primary); font-size: 0.95rem;">${r.est_1rm} <span style="font-size: 0.7rem; font-weight: normal; color: var(--color-text-muted);">${r.unit}</span></div>
+            <div style="font-size: 0.65rem; color: var(--color-accent); font-weight: bold;">EST. 1RM</div>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = `
+      <div class="card" style="border: 1px solid var(--color-card-border);">
+        <div class="card-header" style="margin-bottom: 10px;">
+          <div>
+            <h3 class="card-title" style="font-size: 1.05rem;">🏆 Estimated 1-Rep Max (1RM) Records</h3>
+            <p class="card-subtitle" style="font-size: 0.75rem;">Calculated via Brzycki formula from your top completed sets</p>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px;">
+          ${cardsHtml}
+        </div>
+      </div>
+    `;
+
+  } catch (err) {
+    console.warn('Failed to load strength records:', err);
+  }
+}

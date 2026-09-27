@@ -217,12 +217,22 @@
 
     <!-- View: Past Workouts History -->
     <section id="view-history" class="view">
-      <div class="card-header" style="margin-bottom: 12px;">
+      <div class="card-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
         <div>
-          <h2 class="card-title" style="font-size: 1.2rem;">Past Workouts</h2>
-          <p class="card-subtitle">Your logged training sessions</p>
+          <h2 class="card-title" style="font-size: 1.2rem;">Past Workouts & Analytics</h2>
+          <p class="card-subtitle">Volume landmarks, strength progression, and logs</p>
         </div>
         <button class="btn btn-outline" onclick="loadHistory()">↻ Refresh</button>
+      </div>
+
+      <!-- Weekly Hypertrophy Volume Landmarks -->
+      <div id="historyWeeklyVolume" style="margin-bottom: 16px;"></div>
+
+      <!-- Estimated 1RM Strength Records Tracker -->
+      <div id="historyStrengthRecords" style="margin-bottom: 16px;"></div>
+
+      <div class="card-header" style="margin-top: 20px; margin-bottom: 8px;">
+        <h3 class="card-title" style="font-size: 1.05rem;">Logged Training Sessions</h3>
       </div>
       <div id="historyList"></div>
     </section>
@@ -379,15 +389,72 @@
       </div>
     </section>
   <!-- Floating Rest Timer -->
-  <div id="restTimerBanner" style="display: none; position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: var(--color-primary); color: white; padding: 12px 24px; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 1000; align-items: center; gap: 12px; font-size: 1.1rem;">
+  <div id="restTimerBanner" style="display: none; position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: var(--color-primary); color: white; padding: 12px 20px; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 20px rgba(0,0,0,0.6); z-index: 1000; align-items: center; gap: 12px; font-size: 1.05rem;">
     ⏳ Rest: <span id="restTimerDisplay" style="font-family: monospace; font-size: 1.2rem;">01:30</span>
+    <button id="restTimerMuteBtn" onclick="toggleRestTimerMute()" style="background: rgba(0,0,0,0.3); border: none; color: white; border-radius: 50%; width: 28px; height: 28px; line-height: 1; cursor: pointer; font-size: 0.9rem;" title="Mute/Unmute Chime">🔔</button>
     <button onclick="stopRestTimer()" style="background: rgba(0,0,0,0.3); border: none; color: white; border-radius: 50%; width: 28px; height: 28px; line-height: 1; cursor: pointer;">✕</button>
+  </div>
+
+  <!-- Modal: Barbell Plate Calculator -->
+  <div id="modalPlateCalc" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 2000; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 100%; max-width: 420px; background: #131b2e; border: 1px solid var(--color-card-border); max-height: 90vh; overflow-y: auto;">
+      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 class="card-title" style="margin: 0; font-size: 1.15rem;">🧮 Barbell Plate Calculator</h3>
+        <button onclick="closePlateCalcModal()" style="background: transparent; border: none; color: var(--color-text-muted); font-size: 1.4rem; cursor: pointer;">✕</button>
+      </div>
+      <div style="margin-bottom: 12px;">
+        <label class="form-label" style="font-size: 0.8rem;">Total Target Weight</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="number" id="plateCalcTargetWeight" class="form-input" style="font-size: 1.2rem; font-weight: bold; text-align: center;" placeholder="e.g. 185" oninput="calculatePlates()">
+          <select id="plateCalcBarWeight" class="form-input" style="width: 120px;" onchange="calculatePlates()">
+            <option value="45">45 lb Bar</option>
+            <option value="35">35 lb Bar</option>
+            <option value="20">20 kg Bar</option>
+            <option value="15">15 kg Bar</option>
+          </select>
+        </div>
+      </div>
+      <div id="plateCalcResults" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 16px; text-align: center; margin-bottom: 12px;">
+        <!-- Visual plates populated by JS -->
+      </div>
+      <button class="btn btn-primary" style="width: 100%;" onclick="closePlateCalcModal()">Done</button>
+    </div>
+  </div>
+
+  <!-- Modal: Automated Warm-Up Ramp -->
+  <div id="modalWarmupRamp" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 2000; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 100%; max-width: 440px; background: #131b2e; border: 1px solid var(--color-card-border); max-height: 90vh; overflow-y: auto;">
+      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div>
+          <h3 id="warmupModalTitle" class="card-title" style="margin: 0; font-size: 1.15rem;">🌡️ Warm-Up Protocol</h3>
+          <p class="card-subtitle" style="font-size: 0.75rem;">Scientific ramp sets to prime your CNS & prevent injury</p>
+        </div>
+        <button onclick="closeWarmupModal()" style="background: transparent; border: none; color: var(--color-text-muted); font-size: 1.4rem; cursor: pointer;">✕</button>
+      </div>
+      <div id="warmupModalContent"></div>
+      <button class="btn btn-primary" style="width: 100%; margin-top: 14px;" onclick="closeWarmupModal()">Got It, Let's Lift</button>
+    </div>
+  </div>
+
+  <!-- Modal: Exercise Swap (Equipment Busy) -->
+  <div id="modalSwapExercise" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 2000; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 100%; max-width: 440px; background: #131b2e; border: 1px solid var(--color-card-border); max-height: 90vh; overflow-y: auto;">
+      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div>
+          <h3 class="card-title" style="margin: 0; font-size: 1.15rem;">🔄 Swap Exercise</h3>
+          <p id="swapModalSubtitle" class="card-subtitle" style="font-size: 0.75rem;">Select a matching alternative</p>
+        </div>
+        <button onclick="closeSwapModal()" style="background: transparent; border: none; color: var(--color-text-muted); font-size: 1.4rem; cursor: pointer;">✕</button>
+      </div>
+      <div id="swapAlternativesList" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px;">
+        <!-- Populated dynamically -->
+      </div>
+      <button class="btn btn-outline" style="width: 100%;" onclick="closeSwapModal()">Cancel</button>
+    </div>
   </div>
 
   </main>
 
-  
-
-  <script src="/js/app.js?v=11"></script>
+  <script src="/js/app.js?v=30"></script>
 </body>
 </html>
