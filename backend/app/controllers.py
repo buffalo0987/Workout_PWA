@@ -735,6 +735,8 @@ Current Routines Data:
 Your capabilities:
 You can provide a conversational response. If the user asks for new routines or modifications, you MUST provide them by returning a JSON object containing an array of 'new_routines' or 'modified_routines'. If no changes are needed, just return 'message'.
 
+CRITICAL SCHEDULING RULE: If you are generating or modifying multiple routines, you MUST NEVER schedule them on the same day. Ensure absolutely zero overlap in the 'schedule_days' arrays across all routines (e.g. if Routine A is on Friday, Routine B cannot be on Friday).
+
 Return ONLY valid JSON in this exact format:
 {{
   "message": "Your conversational response here, formatted in markdown. Explain what you've done or answer the question.",
