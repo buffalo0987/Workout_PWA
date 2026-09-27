@@ -43,7 +43,7 @@ def init_database(db_path: str = DEFAULT_DB_PATH):
         print(f"[+] Automatically seeded {len(catalog)} exercises into catalog.")
 
     # Verify default settings
-    cursor.execute("SELECT key, value FROM app_settings WHERE key = 'selected_ollama_model'")
+    cursor.execute("SELECT key, value FROM user_settings WHERE key = 'selected_ollama_model'")
     row = cursor.fetchone()
     if row:
         print(f"[+] Verified default setting: {row[0]} = {row[1]}")

@@ -17,14 +17,14 @@ CREATE TABLE IF NOT EXISTS user_settings (
 
 
 -- Seed Default Settings
-INSERT OR IGNORE INTO app_settings (key, value, description)
+INSERT OR IGNORE INTO user_settings (user_id, key, value, description)
 VALUES 
-    ('selected_ollama_model', 'qwen3:14b', 'Selected local Ollama LLM model for progressive overload and recovery'),
-    ('ollama_base_url', 'http://localhost:11434', 'Base URL for Ollama service'),
-    ('sparky_base_url', 'http://localhost:8080', 'Base URL for SparkyFitness instance'),
-    ('sparky_api_token', '', 'Bearer token for authenticating with SparkyFitness API'),
-    ('default_unit_preference', 'kg', 'Default weight unit preference (kg or lbs)'),
-    ('double_progression_threshold_rpe', '8.5', 'Maximum RPE at top rep target before triggering weight increment');
+    ('default_user', 'selected_ollama_model', 'qwen3:14b', 'Selected local Ollama LLM model for progressive overload and recovery'),
+    ('default_user', 'ollama_base_url', 'http://localhost:11434', 'Base URL for Ollama service'),
+    ('default_user', 'sparky_base_url', 'http://localhost:8080', 'Base URL for SparkyFitness instance'),
+    ('default_user', 'sparky_api_token', '', 'Bearer token for authenticating with SparkyFitness API'),
+    ('default_user', 'default_unit_preference', 'kg', 'Default weight unit preference (kg or lbs)'),
+    ('default_user', 'double_progression_threshold_rpe', '8.5', 'Maximum RPE at top rep target before triggering weight increment');
 
 -- 2. Users Table
 CREATE TABLE IF NOT EXISTS users (
