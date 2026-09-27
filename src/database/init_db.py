@@ -28,7 +28,7 @@ def init_database(db_path: str = DEFAULT_DB_PATH):
     conn.commit()
 
     # Auto-seed Wger Exercise Catalog if empty
-    CATALOG_JSON = Path(__file__).parent.parent / "data" / "wger_catalog.json"
+    CATALOG_JSON = Path(__file__).parent.parent / "data" / "exercises_seed.json"
     cursor.execute("SELECT COUNT(*) FROM exercises")
     ex_count = cursor.fetchone()[0]
     if ex_count == 0 and CATALOG_JSON.exists():
@@ -36,11 +36,11 @@ def init_database(db_path: str = DEFAULT_DB_PATH):
         with open(CATALOG_JSON, "r", encoding="utf-8") as f:
             catalog = json.load(f)
         cursor.executemany("""
-            INSERT OR IGNORE INTO exercises (id, user_id, name, category, primary_muscle, secondary_muscles, is_custom, description, equipment, animation_svg)
-            VALUES (:id, 'default_user', :name, :category, :primary_muscle, :secondary_muscles, :is_custom, :description, :equipment, :animation_svg)
+            INSERT OR IGNORE INTO exercises (id, user_id, name, category, primary_muscle, secondary_muscles, is_custom, description, equipment, animation_svg, images)
+            VALUES (:id, 'default_user', :name, :category, :primary_muscle, :secondary_muscles, :is_custom, :description, :equipment, :animation_svg, :images)
         """, catalog)
         conn.commit()
-        print(f"[+] Automatically seeded {len(catalog)} Wger exercises into catalog.")
+        print(f"[+] Automatically seeded {len(catalog)} exercises into catalog.")
 
     # Verify default settings
     cursor.execute("SELECT key, value FROM app_settings WHERE key = 'selected_ollama_model'")
