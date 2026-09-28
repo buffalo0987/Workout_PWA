@@ -114,3 +114,48 @@ def _fallback_overload(context_data: Optional[Dict[str, Any]], model: str, err: 
         "model": f"{model} (offline fallback: {err})",
         "is_fallback": True
     }
+
+def stream_completion(
+    prompt: str,
+    system_prompt: str = "You are an elite strength and conditioning coach analyzing progressive overload.",
+    model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    temperature: float = 0.3
+):
+    """
+    Generator yielding token strings as they arrive from Ollama streaming endpoint.
+    """
+    endpoint = f"{base_url.rstrip('/')}/api/generate"
+    payload = {
+        "model": model or DEFAULT_MODEL,
+        "prompt": prompt,
+        "system": system_prompt,
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+            "num_ctx": 8192
+        }
+    }
+    data_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=data_bytes,
+        headers={"Content-Type": "application/json", "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        for line in response:
+            if not line:
+                continue
+            try:
+                line_str = line.decode("utf-8").strip()
+                if not line_str:
+                    continue
+                chunk = json.loads(line_str)
+                token = chunk.get("response", "")
+                done = chunk.get("done", False)
+                yield {"token": token, "done": done}
+                if done:
+                    break
+            except Exception:
+                continue

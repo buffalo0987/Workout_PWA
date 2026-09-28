@@ -1302,7 +1302,18 @@ async function toggleHistoryDetails(sessionId) {
 }
 
 // AI Coach Chat State
+// AI Coach Chat State
 let chatHistory = [];
+
+function formatCoachMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/^[•\-\*]\s+(.*)$/gm, '<li style="margin-left: 14px; margin-bottom: 2px;">$1</li>')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+}
 
 async function sendCoachMessage() {
   const inputEl = document.getElementById('coachChatInput');
@@ -1315,33 +1326,84 @@ async function sendCoachMessage() {
   chatHistory.push({ role: "user", content: text });
   appendChatMessage(text, 'user');
   
-  // Show typing indicator
-  const typingId = appendChatMessage('Coach is thinking...', 'coach', true);
+  // Create streaming coach message container
+  const coachMsgEl = appendChatMessage('...', 'coach');
+  const chatContainer = document.getElementById('coachChatHistory');
   
+  let fullCoachReply = '';
+  let streamSuccess = false;
+
   try {
-    const res = await fetch(`/api/coaching/chat?user_id=${API_USER}`, {
+    const res = await fetch(`/api/coaching/chat/stream?user_id=${API_USER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: API_USER, messages: chatHistory })
     });
-    const data = await res.json();
-    
-    // Remove typing indicator
-    document.getElementById(typingId)?.remove();
-    
-    // Add coach reply to UI
-    chatHistory.push({ role: "assistant", content: data.reply });
-    appendChatMessage(data.reply, 'coach');
-    
-    if (data.routines_created > 0) {
-      appendChatMessage(`*I have updated your routines! Check the Routines tab.*`, 'system');
-      loadRoutines(); // reload routines in background
+
+    if (res.ok && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop(); // keep partial chunk
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            try {
+              const payload = JSON.parse(trimmed.slice(6));
+              if (payload.type === 'text') {
+                fullCoachReply += payload.delta;
+                coachMsgEl.innerHTML = formatCoachMarkdown(fullCoachReply);
+                if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+                streamSuccess = true;
+              } else if (payload.type === 'action') {
+                const totalActions = (payload.routines_created || 0) + (payload.routines_updated || 0) + (payload.routines_deleted || 0);
+                if (totalActions > 0) {
+                  appendChatMessage(`🛠️ **Routines Updated:** ${payload.details || 'Check your Routines tab!'}`, 'system');
+                  loadRoutines(); // Reload routines tab in background
+                }
+              }
+            } catch (jsonErr) {
+              // Ignore partial JSON parse
+            }
+          }
+        }
+      }
     }
-    
-  } catch (err) {
-    console.error(err);
-    document.getElementById(typingId)?.remove();
-    appendChatMessage('Sorry, I encountered an error connecting to Ollama.', 'system');
+  } catch (streamErr) {
+    console.warn('Stream interrupted or failed, falling back to static endpoint:', streamErr);
+  }
+
+  // Fallback to static endpoint if stream produced nothing
+  if (!streamSuccess || !fullCoachReply.trim()) {
+    try {
+      const res = await fetch(`/api/coaching/chat?user_id=${API_USER}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: API_USER, messages: chatHistory })
+      });
+      const data = await res.json();
+      fullCoachReply = data.reply || 'No response received from coach.';
+      coachMsgEl.innerHTML = formatCoachMarkdown(fullCoachReply);
+      if (data.routines_created > 0 || data.routines_updated > 0) {
+        appendChatMessage(`🛠️ **Routines Updated:** ${data.details || 'Check your Routines tab!'}`, 'system');
+        loadRoutines();
+      }
+    } catch (fallbackErr) {
+      coachMsgEl.innerHTML = '<span style="color: var(--color-danger);">Unable to connect to AI Coach service.</span>';
+      return;
+    }
+  }
+
+  if (fullCoachReply) {
+    chatHistory.push({ role: "assistant", content: fullCoachReply });
   }
 }
 
@@ -1365,20 +1427,22 @@ function appendChatMessage(text, sender, isTyping = false) {
     msgDiv.style.alignSelf = 'flex-start';
     msgDiv.style.background = 'var(--color-card-border)';
     msgDiv.style.color = 'var(--color-text)';
-    msgDiv.innerHTML = text.replace(/\n/g, '<br>');
+    msgDiv.innerHTML = formatCoachMarkdown(text);
     if (isTyping) msgDiv.style.opacity = '0.7';
   } else if (sender === 'system') {
     msgDiv.style.alignSelf = 'center';
-    msgDiv.style.background = 'transparent';
+    msgDiv.style.background = 'rgba(255,255,255,0.05)';
+    msgDiv.style.border = '1px solid rgba(255,255,255,0.1)';
+    msgDiv.style.borderRadius = '8px';
     msgDiv.style.color = 'var(--color-accent)';
-    msgDiv.style.fontStyle = 'italic';
     msgDiv.style.fontSize = '0.8rem';
-    msgDiv.innerHTML = text;
+    msgDiv.style.padding = '6px 12px';
+    msgDiv.innerHTML = formatCoachMarkdown(text);
   }
   
   container.appendChild(msgDiv);
   container.scrollTop = container.scrollHeight;
-  return msgId;
+  return msgDiv;
 }
 
 

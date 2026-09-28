@@ -250,6 +250,23 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, result)
                 return
 
+            if path == "/api/coaching/chat/stream":
+                from backend.app.controllers import handle_coach_chat_stream
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                for chunk in handle_coach_chat_stream(body):
+                    try:
+                        self.wfile.write(chunk.encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                return
+
             if path == "/api/workouts/suggest":
                 result = suggest_workout_progression(body)
                 self._send_json(200, result)

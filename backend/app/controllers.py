@@ -15,7 +15,7 @@ import sqlite3
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from src.models.settings import SettingsRepository
 from backend.app.services.ollama_client import generate_completion, get_available_models
@@ -881,126 +881,135 @@ def get_recent_workout_history_summary(user_id: str = "default_user", limit: int
         return "\n\n".join(summary)
 
 # -----------------------------------------------------------------------------
-# AI Coach Chat (/api/coaching/chat)
+# AI Coach Chat & Streaming (/api/coaching/chat & /api/coaching/chat/stream)
 # -----------------------------------------------------------------------------
 
-def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
-    user_id = data.get("user_id") or "default_user"
-    messages = data.get("messages", [])
-    
+def format_routines_yaml(routines: List[Dict[str, Any]]) -> str:
+    if not routines:
+        return "No routines created yet."
+    lines = []
+    for r in routines:
+        title = r.get("title", "Untitled")
+        rid = r.get("id", "")
+        days = ", ".join(r.get("schedule_days") or ["Unscheduled"])
+        desc = r.get("description", "")
+        lines.append(f"- Routine: \"{title}\" (id: {rid})")
+        lines.append(f"  Schedule: {days}")
+        if desc:
+            lines.append(f"  Notes: {desc}")
+        lines.append("  Exercises:")
+        for idx, ex in enumerate(r.get("exercises", []), 1):
+            ex_name = ex.get("exercise_name") or ex.get("name") or "Exercise"
+            sets = ex.get("target_sets", 3)
+            min_r = ex.get("min_reps", 8)
+            max_r = ex.get("max_reps", 12)
+            rest = ex.get("rest_seconds", 90)
+            lines.append(f"    {idx}. {ex_name}: {sets} sets × {min_r}-{max_r} reps ({rest}s rest)")
+    return "\n".join(lines)
+
+def build_coach_prompt(user_id: str, messages: List[Dict[str, Any]]) -> Tuple[str, str, str]:
     settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
-    active_model = data.get("model") or settings_repo.get_selected_ollama_model("qwen3:14b")
+    active_model = settings_repo.get_selected_ollama_model("qwen2.5:7b")
     ollama_url = settings_repo.get_ollama_base_url()
     unit = settings_repo.get_unit_preference("lb")
 
+    from backend.app.services.coaching_analytics import compute_athlete_diagnostics
+    diagnostics = compute_athlete_diagnostics(user_id, DB_PATH)
+
     routines = list_routines(user_id)
-    routines_context = json.dumps(routines, indent=2)
+    routines_yaml = format_routines_yaml(routines)
     history_context = get_recent_workout_history_summary(user_id=user_id, limit=5)
     
     gym_equipment = settings_repo.get_setting("gym_equipment", "")
-    equip_constraint = f"\nCRITICAL EQUIPMENT CONSTRAINT: The athlete ONLY has access to the following equipment: {gym_equipment}\nDo NOT suggest any exercises that require equipment outside of this list." if gym_equipment else ""
+    equip_constraint = f"Available Equipment Constraint: {gym_equipment}" if gym_equipment else "Available Equipment: Full commercial gym"
 
     sparky_summary = ""
     try:
         if settings_repo.get_sparky_base_url() and settings_repo.get_sparky_api_token():
             nutr = get_recent_sparky_nutrition_averages(user_id=user_id, days=3)
             if nutr.get("days_averaged", 0) > 0:
-                sparky_summary = f"\nRecent Nutrition (3-day SparkyFitness average):\n- Calories: {nutr['avg_calories']} kcal/day\n- Protein: {nutr['avg_protein_g']}g/day\n- Carbs: {nutr['avg_carbs_g']}g/day\n- Fat: {nutr['avg_fat_g']}g/day\n"
+                sparky_summary = f"Recent Nutrition (3-day SparkyFitness average): {nutr['avg_calories']} kcal/day, {nutr['avg_protein_g']}g protein/day\n"
     except Exception:
         pass
 
-    prompt = f"""
-You are an expert, encouraging, and highly analytical AI strength and hypertrophy coach. The athlete is asking for advice, feedback on progress, routine modifications, or new routines.
+    system_prompt = f"""You are Dr. Marcus Vance, an elite, world-class strength and hypertrophy coach (PhD in Exercise Physiology & CSCS). You coach competitive athletes and serious lifters.
 
-Current Athlete Profile & Settings:
-- Weight Unit: {unit}
-{equip_constraint}{sparky_summary}
+ATHLETE CURRENT SETTINGS:
+Weight Unit: {unit}
+{equip_constraint}
+{sparky_summary}
+{diagnostics}
 
-Recent Completed Workout History (Last 5 Sessions):
+CURRENT ATHLETE ROUTINES:
+{routines_yaml}
+
+RECENT WORKOUT LOGS (LAST 5 SESSIONS):
 {history_context}
 
-Current Routines Data:
-{routines_context}
+COACHING DIRECTIVES & PERSONA:
+1. ZERO FLUFF: NEVER use sycophantic customer-service filler (NEVER say "Certainly!", "I would be happy to help", "As an AI coach", or "Great question!"). Jump straight into the physiological analysis or coaching directive with confidence.
+2. REFERENCE THE DIAGNOSTICS: Actively cite the diagnostic signals above. If the athlete has stalled, reference their exact weights, reps, and RPE. If push:pull volume is imbalanced, explain the postural/injury risk.
+3. BIOMECHANICAL SEQUENCING: When creating or modifying routines, sequence exercises strictly:
+   1) Heavy compound lifts first (e.g. Barbell Squat, Deadlift, Bench Press, Overhead Press) when the central nervous system is fresh.
+   2) Free-weight / compound accessories second (e.g. Incline DB Press, Romanian Deadlift, Rows, Dips, Pull-Ups).
+   3) Isolation movements third (e.g. Cable Lateral Raises, Bicep Curls, Tricep Extensions).
+   4) Core / Calves last.
+4. ZERO SCHEDULE OVERLAP: Ensure no two routines share the same 'schedule_days'.
+5. ACTIONS AT THE END: If the athlete requests routine changes, modifications, additions, or deletions, explain your scientific rationale in your message first, then provide the exact database mutations at the very end inside a ```json ... ``` block.
 
-Your capabilities:
-You can provide a conversational response. If the user asks for new routines or modifications, you MUST provide them by returning a JSON object containing an array of 'routines_to_create', 'routines_to_update', or 'routines_to_delete'. If no routine changes are needed, just return 'message'.
+FEW-SHOT COACHING EXEMPLARS:
 
-USING ATHLETE DATA:
-You have direct visibility into the athlete's Recent Completed Workout History above. Reference their real logged weights, sets, reps, and RPE when answering questions, analyzing performance, spotting plateaus, celebrating PRs, or suggesting weight progressions. If their logged nutrition is available, compare their intake against their stated goals (e.g. bulking vs cutting).
+--- Example 1 (Stall Analysis) ---
+User: "My bench press has been stuck at 185 for two weeks, what gives?"
+Coach:
+Looking at your diagnostic logs, you hit 185 lb for 6 reps on Sept 22 and again on Sept 25, with RPE peaking at 9.5. Your chest volume is currently at 12 direct sets, which is within the optimal hypertrophy landmark (10–20 sets). However, your push:pull ratio is skewed at 1.8:1, indicating your upper back and rotator cuff stabilizers are under-developed compared to your anterior delts and pecs.
 
-CRITICAL SCHEDULING RULE: If you are generating or modifying multiple routines, you MUST NEVER schedule them on the same day. Ensure absolutely zero overlap in the 'schedule_days' arrays across all routines (e.g. if Routine A is on Friday, Routine B cannot be on Friday).
+Here is the plan to break this plateau:
+1. **Micro-load or Drop Rep Range:** Switch to a 3×4-6 strength block at 190 lb to stimulate higher mechanical tension.
+2. **Back Balance:** We need to increase your barbell row volume by 3 sets to build a stronger pushing platform.
+3. **Caloric Check:** Ensure you're in a consistent 200–300 kcal surplus.
 
-BIOMECHANICAL EXERCISE SEQUENCING (COMPOUND FIRST):
-When creating or modifying routines, you MUST sequence exercises in strict order of physiological demand:
-1. Primary Heavy Compound Lifts first (e.g. Barbell Squat, Deadlift, Barbell Bench Press, Overhead Press) when the central nervous system is fresh and stabilizer fatigue is minimal.
-2. Secondary Compound / Free-Weight Accessory Lifts second (e.g. Incline Dumbbell Press, Romanian Deadlift, Dumbbell Rows, Dips, Pull-Ups).
-3. Isolation / Single-Joint Movements third (e.g. Cable Lateral Raises, Bicep Curls, Tricep Extensions, Leg Extensions).
-4. Core / Calves / Direct Abs last.
-NEVER place heavy compound barbell movements at the end of a session after isolation work.
+--- Example 2 (Routine Modification) ---
+User: "Can you add a dedicated Leg Day on Wednesday?"
+Coach:
+Understood. Adding a focused lower-body session on Wednesday gives you 48 hours of recovery following your Monday upper body work and keeps your total weekly leg volume in the optimal hypertrophy window (14 sets total). 
 
-STRUCTURAL BALANCE & INJURY PREVENTION:
-For upper-body routines, maintain a balanced 1:1 or 1.5:1 Pull-to-Push ratio (for every horizontal or vertical pressing movement, ensure adequate rowing or rear-delt work to protect shoulder mechanics and posture).
+I've sequenced your primary axial load (Barbell Squat) first while your spinal erectors and nervous system are completely fresh, followed by Romanian Deadlifts for posterior chain, finishing with Quad and Calf isolation:
 
-EXPERT COACHING PRINCIPLES:
-1. Progressive Overload: Do not arbitrarily swap out exercises every single week. True strength and hypertrophy come from mastering compound movements. If an athlete plateaus, suggest manipulating target_sets, min_reps, or max_reps instead of randomly changing the movement.
-2. Optimal Volume: Limit routines to 5-8 highly effective exercises. If an athlete requests 10+ exercises, push back and explain "junk volume".
-3. Recovery & CNS Fatigue: Strongly advise against training more than 5 days a week. Muscles grow during recovery, not in the gym.
-4. Nutrition Alignment: If an athlete's goal is hypertrophy or weight gain, remind them that training must be paired with a caloric surplus and sufficient protein (approx 0.8-1g per lb of bodyweight).
-
-INDUSTRY STANDARDS FOR GOALS:
-When generating the JSON for `min_reps`, `max_reps`, and `rest_seconds`, you MUST adhere to the following scientifically established standards based on the user's primary goal:
-- Strength: 1-5 reps, 3-6 sets, 120-300 seconds rest.
-- Hypertrophy (Muscle Size): 6-12 reps, 3-5 sets, 60-120 seconds rest.
-- Endurance: 15+ reps, 2-3 sets, 30-60 seconds rest.
-
-Return ONLY valid JSON in this exact format:
+```json
 {{
-  "message": "Your conversational response here, formatted in markdown. Explain what you've done or answer the question.",
   "routines_to_create": [
     {{
-      "title": "New Routine Name",
-      "description": "...",
-      "schedule_days": ["Monday", "Wednesday"],
+      "title": "Lower Body Hypertrophy",
+      "description": "Quadriceps, Hamstrings, and Calves focus",
+      "schedule_days": ["Wednesday"],
       "exercises": [
-         {{"exercise_id": "UUID-from-DB-if-known-or-leave-blank", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90, "name": "Barbell Bench Press"}}
+        {{"name": "Barbell Squat", "target_sets": 3, "min_reps": 6, "max_reps": 8, "rest_seconds": 180}},
+        {{"name": "Romanian Deadlift", "target_sets": 3, "min_reps": 8, "max_reps": 10, "rest_seconds": 120}},
+        {{"name": "Leg Extension", "target_sets": 3, "min_reps": 10, "max_reps": 15, "rest_seconds": 90}},
+        {{"name": "Standing Calf Raise", "target_sets": 4, "min_reps": 12, "max_reps": 15, "rest_seconds": 60}}
       ]
     }}
-  ],
-  "routines_to_update": [
-    {{
-      "id": "existing-routine-uuid",
-      "title": "Updated Title",
-      "description": "Updated Description",
-      "schedule_days": ["Monday", "Thursday"],
-      "exercises": [
-         {{"exercise_id": "UUID-from-DB-if-known-or-leave-blank", "target_sets": 4, "min_reps": 6, "max_reps": 8, "rest_seconds": 120, "name": "Squat"}}
-      ]
-    }}
-  ],
-  "routines_to_delete": ["routine-uuid-to-delete"]
+  ]
 }}
-
-To match exercises, use general names. If the user wants a new routine, generate the exercises array with common names (like "Barbell Bench Press", "Squat", "Pull Up") in the 'name' field if you don't know the ID.
+```
 """
 
-    # We will just pass the prompt as the system message and append user history
-    # For simplicity, we just format the last message into the prompt
-    last_user_message = messages[-1]["content"] if messages else ""
-    full_prompt = prompt + "\n\nUser Message:\n" + last_user_message
+    history_str = ""
+    if messages:
+        recent = messages[-5:]
+        for m in recent:
+            role = "Athlete" if m.get("role") == "user" else "Coach"
+            history_str += f"\n{role}: {m.get('content', '')}"
 
-    ollama_res = generate_completion(
-        prompt=full_prompt,
-        model=active_model,
-        base_url=ollama_url,
-        raw_json_format=True,
-        timeout=90
-    )
+    full_prompt = system_prompt + "\n\nCONVERSATION HISTORY:" + history_str + "\nCoach:"
+    return full_prompt, active_model, ollama_url
 
-    parsed = ollama_res.get("parsed_json") or {}
-    message = parsed.get("message", "I couldn't process that properly.")
+def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, Any]:
     routines_to_create = parsed.get("routines_to_create", [])
     routines_to_update = parsed.get("routines_to_update", [])
     routines_to_delete = parsed.get("routines_to_delete", [])
+    details = []
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -1026,13 +1035,15 @@ To match exercises, use general names. If the user wants a new routine, generate
         for rt in routines_to_create:
             exercises_payload = match_exercises(rt)
             if exercises_payload:
+                title = rt.get("title", "AI Generated Routine")
                 create_routine({
                     "user_id": user_id,
-                    "title": rt.get("title", "AI Generated Routine"),
+                    "title": title,
                     "description": rt.get("description", "Generated by AI Coach"),
                     "schedule_days": rt.get("schedule_days", []),
                     "exercises": exercises_payload
                 })
+                details.append(f"Created '{title}'")
                 
         for rt in routines_to_update:
             rt_id = rt.get("id")
@@ -1041,18 +1052,118 @@ To match exercises, use general names. If the user wants a new routine, generate
                 if exercises_payload:
                     rt["exercises"] = exercises_payload
                     update_routine(rt_id, rt)
+                    details.append(f"Updated '{rt.get('title', rt_id)}'")
                     
         for rt_id in routines_to_delete:
             if rt_id:
                 delete_routine(rt_id)
+                details.append("Deleted routine")
 
     return {
-        "reply": message,
         "routines_created": len(routines_to_create),
         "routines_updated": len(routines_to_update),
         "routines_deleted": len(routines_to_delete),
-        "model_used": ollama_res.get("model", active_model),
+        "details": ", ".join(details) if details else ""
     }
+
+def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
+    user_id = data.get("user_id") or "default_user"
+    messages = data.get("messages", [])
+    
+    full_prompt, active_model, ollama_url = build_coach_prompt(user_id, messages)
+
+    ollama_res = generate_completion(
+        prompt=full_prompt,
+        model=active_model,
+        base_url=ollama_url,
+        raw_json_format=False,
+        timeout=90
+    )
+
+    raw_text = ollama_res.get("content", "")
+    
+    import re
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
+    actions = {"routines_created": 0, "routines_updated": 0, "routines_deleted": 0, "details": ""}
+    clean_reply = raw_text
+    
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group(1))
+            actions = execute_routine_actions(user_id, parsed)
+            clean_reply = raw_text[:json_match.start()].strip()
+        except Exception as e:
+            logger.warning(f"Failed to execute actions from non-stream chat: {e}")
+
+    return {
+        "reply": clean_reply,
+        "raw_content": raw_text,
+        "model_used": ollama_res.get("model", active_model),
+        **actions
+    }
+
+def handle_coach_chat_stream(data: Dict[str, Any]):
+    """
+    Generator yielding Server-Sent Events (SSE) data chunks for streaming AI coaching:
+    - data: {"type": "text", "delta": "..."}\n\n
+    - data: {"type": "action", "routines_created": N, "details": "..."}\n\n
+    - data: {"type": "done"}\n\n
+    """
+    from backend.app.services.ollama_client import stream_completion
+
+    user_id = data.get("user_id") or "default_user"
+    messages = data.get("messages", [])
+
+    full_prompt, active_model, ollama_url = build_coach_prompt(user_id, messages)
+
+    json_block_buffer = []
+    in_json_block = False
+
+    try:
+        for chunk in stream_completion(prompt=full_prompt, model=active_model, base_url=ollama_url, temperature=0.3):
+            token = chunk.get("token", "")
+            done = chunk.get("done", False)
+
+            if not in_json_block:
+                if "```json" in token:
+                    parts = token.split("```json")
+                    if parts[0]:
+                        yield f"data: {json.dumps({'type': 'text', 'delta': parts[0]})}\n\n"
+                    in_json_block = True
+                    if len(parts) > 1:
+                        json_block_buffer.append(parts[1])
+                else:
+                    if token:
+                        yield f"data: {json.dumps({'type': 'text', 'delta': token})}\n\n"
+            else:
+                if "```" in token:
+                    parts = token.split("```")
+                    json_block_buffer.append(parts[0])
+                    in_json_block = False
+                    if len(parts) > 1 and parts[1].strip():
+                        yield f"data: {json.dumps({'type': 'text', 'delta': parts[1]})}\n\n"
+                else:
+                    json_block_buffer.append(token)
+
+            if done:
+                break
+
+    except Exception as e:
+        logger.exception("Error in handle_coach_chat_stream:")
+        yield f"data: {json.dumps({'type': 'text', 'delta': f'\\n\\n*[Connection Error: {str(e)}]*'})}\n\n"
+
+    if json_block_buffer:
+        full_json_str = "".join(json_block_buffer).strip()
+        try:
+            import re
+            cleaned = re.sub(r"^```(?:json)?|```$", "", full_json_str, flags=re.MULTILINE).strip()
+            parsed = json.loads(cleaned)
+            actions = execute_routine_actions(user_id, parsed)
+            yield f"data: {json.dumps({'type': 'action', **actions})}\n\n"
+        except Exception as e:
+            logger.warning(f"Failed to parse or execute action JSON: {e}")
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 
