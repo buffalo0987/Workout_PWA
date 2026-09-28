@@ -1357,7 +1357,11 @@ async function sendCoachMessage() {
   const chatContainer = document.getElementById('coachChatHistory');
   
   let fullCoachReply = '';
+  let fullCoachThought = '';
   let streamSuccess = false;
+  let thoughtBox = null;
+  let thoughtContentEl = null;
+  let textBodyEl = null;
 
   try {
     const res = await fetch(`/api/coaching/chat/stream?user_id=${API_USER}`, {
@@ -1384,9 +1388,50 @@ async function sendCoachMessage() {
           if (trimmed.startsWith('data: ')) {
             try {
               const payload = JSON.parse(trimmed.slice(6));
-              if (payload.type === 'text') {
+              if (payload.type === 'thought') {
+                if (!thoughtBox) {
+                  coachMsgEl.innerHTML = '';
+                  thoughtBox = document.createElement('details');
+                  thoughtBox.className = 'coach-thought-box thinking';
+                  thoughtBox.open = true;
+
+                  const summary = document.createElement('summary');
+                  summary.className = 'thought-summary';
+                  summary.innerHTML = '<span class="thought-brain-icon">🧠</span> <span class="thought-label">Thinking...</span>';
+
+                  thoughtContentEl = document.createElement('div');
+                  thoughtContentEl.className = 'thought-content';
+
+                  thoughtBox.appendChild(summary);
+                  thoughtBox.appendChild(thoughtContentEl);
+                  coachMsgEl.appendChild(thoughtBox);
+
+                  textBodyEl = document.createElement('div');
+                  textBodyEl.className = 'coach-text-body';
+                  coachMsgEl.appendChild(textBodyEl);
+                }
+
+                fullCoachThought += payload.delta;
+                thoughtContentEl.textContent = fullCoachThought;
+                if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+                streamSuccess = true;
+              } else if (payload.type === 'text') {
+                if (thoughtBox && thoughtBox.classList.contains('thinking')) {
+                  thoughtBox.classList.remove('thinking');
+                  thoughtBox.open = false; // Auto-collapse when coach begins speaking
+                  const label = thoughtBox.querySelector('.thought-label');
+                  if (label) label.textContent = 'Coach Thought Process';
+                }
+
+                if (!textBodyEl) {
+                  coachMsgEl.innerHTML = '';
+                  textBodyEl = document.createElement('div');
+                  textBodyEl.className = 'coach-text-body';
+                  coachMsgEl.appendChild(textBodyEl);
+                }
+
                 fullCoachReply += payload.delta;
-                coachMsgEl.innerHTML = formatCoachMarkdown(fullCoachReply);
+                textBodyEl.innerHTML = formatCoachMarkdown(fullCoachReply);
                 if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
                 streamSuccess = true;
               } else if (payload.type === 'action') {
@@ -1401,6 +1446,13 @@ async function sendCoachMessage() {
             }
           }
         }
+      }
+
+      if (thoughtBox && thoughtBox.classList.contains('thinking')) {
+        thoughtBox.classList.remove('thinking');
+        thoughtBox.open = false;
+        const label = thoughtBox.querySelector('.thought-label');
+        if (label) label.textContent = 'Coach Thought Process';
       }
     }
   } catch (streamErr) {
@@ -1417,7 +1469,27 @@ async function sendCoachMessage() {
       });
       const data = await res.json();
       fullCoachReply = data.reply || 'No response received from coach.';
-      coachMsgEl.innerHTML = formatCoachMarkdown(fullCoachReply);
+      coachMsgEl.innerHTML = '';
+
+      if (data.thought && data.thought.trim()) {
+        const tb = document.createElement('details');
+        tb.className = 'coach-thought-box';
+        tb.innerHTML = `
+          <summary class="thought-summary">
+            <span class="thought-brain-icon">🧠</span>
+            <span class="thought-label">Coach Thought Process</span>
+          </summary>
+          <div class="thought-content"></div>
+        `;
+        tb.querySelector('.thought-content').textContent = data.thought.trim();
+        coachMsgEl.appendChild(tb);
+      }
+
+      const tbBody = document.createElement('div');
+      tbBody.className = 'coach-text-body';
+      tbBody.innerHTML = formatCoachMarkdown(fullCoachReply);
+      coachMsgEl.appendChild(tbBody);
+
       if (data.routines_created > 0 || data.routines_updated > 0) {
         appendChatMessage(`🛠️ **Routines Updated:** ${data.details || 'Check your Routines tab!'}`, 'system');
         loadRoutines();

@@ -3,7 +3,7 @@
  * Enables offline caching, background asset serving, and offline set queue syncing.
  */
 
-const CACHE_NAME = 'workout-pwa-v33';
+const CACHE_NAME = 'workout-pwa-v34';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

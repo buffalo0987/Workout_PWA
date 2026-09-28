@@ -487,3 +487,82 @@ body {
 .menu-item:active {
   background: rgba(255,255,255,0.05);
 }
+
+/* AI Coach Thinking Scratchpad & Streaming */
+.coach-thought-box {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  transition: all 0.2s ease-in-out;
+}
+
+.coach-thought-box[open] {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.thought-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  outline: none;
+  list-style: none;
+}
+
+.thought-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thought-summary::after {
+  content: '▾';
+  margin-left: auto;
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+  color: var(--color-text-muted);
+}
+
+.coach-thought-box[open] .thought-summary::after {
+  transform: rotate(180deg);
+}
+
+.thought-brain-icon {
+  display: inline-block;
+  font-size: 0.9rem;
+}
+
+.coach-thought-box.thinking .thought-brain-icon {
+  animation: pulseBrain 1.2s infinite ease-in-out;
+}
+
+@keyframes pulseBrain {
+  0% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(96, 165, 250, 0)); }
+  50% { transform: scale(1.18); filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.8)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(96, 165, 250, 0)); }
+}
+
+.thought-content {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.coach-text-body {
+  line-height: 1.4;
+  color: var(--color-text);
+}

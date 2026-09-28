@@ -1081,12 +1081,24 @@ COACHING DIRECTIVES & PERSONA:
    - For Full Body, generate: "Full Body A", "Full Body B".
    - Assign non-overlapping 'schedule_days' (e.g. Upper A = Monday, Lower A = Tuesday, Upper B = Thursday, Lower B = Friday).
    - Session density: 4 to 6 exercises per routine, 3 to 4 working sets each (15 to 20 total sets per session).
+7. MANDATORY THINKING SCRATCHPAD:
+   Before composing your user-facing response, you MUST first plan your reasoning inside <think> ... </think> tags.
+   In your thought scratchpad:
+   - Check athlete diagnostics: Stalls, push:pull ratio, weekly volume landmarks, and fueling status.
+   - Formulate training strategy: Volume targets, exercise selection, rep ranges, and fatigue management.
+   - If generating routines: Map out 4-6 exercises, ensure heavy compounds first, calculate total sets (15-20), verify non-overlapping schedule days, and plan the JSON schema.
+   After closing </think>, output your direct, authoritative coaching advice to the athlete followed by the trailing ```json ... ``` block if actions are required.
 
 FEW-SHOT COACHING EXEMPLARS:
 
 --- Example 1 (Stall Analysis) ---
 User: "My bench press has been stuck at 185 for two weeks, what gives?"
 Coach:
+<think>
+1. Diagnostics: Bench press 185 lb × 6 reps stalled across 2 sessions (Avg RPE 9.5).
+2. Volume & Balance: Chest volume is 12 sets (optimal), but Push:Pull ratio is 1.8:1 (pull volume lagging).
+3. Strategy: Recommend micro-loading/lowering rep range to 3x4-6 at 190 lb, adding barbell row volume to strengthen upper back platform, and checking caloric surplus.
+</think>
 Looking at your diagnostic logs, you hit 185 lb for 6 reps on Sept 22 and again on Sept 25, with RPE peaking at 9.5. Your chest volume is currently at 12 direct sets, which is within the optimal hypertrophy landmark (10–20 sets). However, your push:pull ratio is skewed at 1.8:1, indicating your upper back and rotator cuff stabilizers are under-developed compared to your anterior delts and pecs.
 
 Here is the plan to break this plateau:
@@ -1097,6 +1109,12 @@ Here is the plan to break this plateau:
 --- Example 2 (Routine Modification) ---
 User: "Can you add a dedicated Leg Day on Wednesday?"
 Coach:
+<think>
+1. Schedule: Wednesday is open between Monday upper body and Thursday upper body. 48h recovery achieved.
+2. Volume: 4 exercises, 13 sets. Keeps weekly leg volume in optimal 10-20 set hypertrophy landmark.
+3. Sequencing: Barbell Squat (axial compound) -> Romanian Deadlift (posterior hinge) -> Leg Extension (quad isolation) -> Standing Calf Raise (calf isolation).
+4. JSON: routines_to_create with Wednesday schedule.
+</think>
 Understood. Adding a focused lower-body session on Wednesday gives you 48 hours of recovery following your Monday upper body work and keeps your total weekly leg volume in the optimal hypertrophy window (14 sets total). 
 
 I've sequenced your primary axial load (Barbell Squat) first while your spinal erectors and nervous system are completely fresh, followed by Romanian Deadlifts for posterior chain, finishing with Quad and Calf isolation:
@@ -1122,6 +1140,17 @@ I've sequenced your primary axial load (Barbell Squat) first while your spinal e
 --- Example 3 (Complete Multi-Day Split From Scratch) ---
 User: "Build me a complete 4-day Upper/Lower hypertrophy split from scratch."
 Coach:
+<think>
+1. Athlete Profile: Hypertrophy goal, Intermediate, 4 days/week.
+2. Split Design: 4-day Upper/Lower (Upper A Mon, Lower A Tue, Upper B Thu, Lower B Fri). Non-overlapping.
+3. Session Density & Volume:
+   - Upper A: Flat Bench (comp) -> Barbell Row (comp) -> Incline DB (accessory) -> Lat Raise (iso) -> Tricep (iso). 16 sets.
+   - Lower A: Squat (comp) -> RDL (hinge) -> Leg Press (accessory) -> Leg Curl (iso) -> Calf Raise. 16 sets.
+   - Upper B: OHP (comp) -> Lat Pulldown (comp) -> Dips (accessory) -> Face Pull (iso) -> Incline Curl (iso). 15 sets.
+   - Lower B: Deadlift (comp) -> Bulgarian Split Squat (accessory) -> Leg Extension (iso) -> Seated Calf -> Core. 16 sets.
+4. Total weekly sets: 63 sets across 4 days (~16 sets/day), optimal for 10-20 sets/muscle group.
+5. JSON: Output all 4 routines inside routines_to_create.
+</think>
 Here is your complete 4-day Upper/Lower hypertrophy split calibrated to your {training_goal} goal and {experience_level} experience.
 
 Structure:
@@ -1367,20 +1396,25 @@ def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
     raw_text = ollama_res.get("content", "")
     
     import re
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
+    thought_match = re.search(r"<think>(.*?)</think>", raw_text, re.DOTALL)
+    thought_text = thought_match.group(1).strip() if thought_match else ""
+    clean_text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_text, re.DOTALL)
     actions = {"routines_created": 0, "routines_updated": 0, "routines_deleted": 0, "details": ""}
-    clean_reply = raw_text
+    clean_reply = clean_text
     
     if json_match:
         try:
             parsed = json.loads(json_match.group(1))
             actions = execute_routine_actions(user_id, parsed)
-            clean_reply = raw_text[:json_match.start()].strip()
+            clean_reply = clean_text[:json_match.start()].strip()
         except Exception as e:
             logger.warning(f"Failed to execute actions from non-stream chat: {e}")
 
     return {
         "reply": clean_reply,
+        "thought": thought_text,
         "raw_content": raw_text,
         "model_used": ollama_res.get("model", active_model),
         **actions
@@ -1389,6 +1423,7 @@ def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
 def handle_coach_chat_stream(data: Dict[str, Any]):
     """
     Generator yielding Server-Sent Events (SSE) data chunks for streaming AI coaching:
+    - data: {"type": "thought", "delta": "..."}\n\n
     - data: {"type": "text", "delta": "..."}\n\n
     - data: {"type": "action", "routines_created": N, "details": "..."}\n\n
     - data: {"type": "done"}\n\n
@@ -1400,37 +1435,109 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
 
     full_prompt, active_model, ollama_url = build_coach_prompt(user_id, messages)
 
+    buf = ""
     json_block_buffer = []
     in_json_block = False
+    in_thought = False
+
+    THINK_START = "<think>"
+    THINK_END = "</think>"
+    JSON_START = "```json"
+    JSON_END = "```"
+
+    def longest_prefix_suffix(s: str, target: str) -> int:
+        for i in range(len(target) - 1, 0, -1):
+            if s.endswith(target[:i]):
+                return i
+        return 0
 
     try:
         for chunk in stream_completion(prompt=full_prompt, model=active_model, base_url=ollama_url, temperature=0.3):
             token = chunk.get("token", "")
             done = chunk.get("done", False)
 
-            if not in_json_block:
-                if "```json" in token:
-                    parts = token.split("```json")
-                    if parts[0]:
-                        yield f"data: {json.dumps({'type': 'text', 'delta': parts[0]})}\n\n"
-                    in_json_block = True
-                    if len(parts) > 1:
-                        json_block_buffer.append(parts[1])
-                else:
-                    if token:
-                        yield f"data: {json.dumps({'type': 'text', 'delta': token})}\n\n"
-            else:
-                if "```" in token:
-                    parts = token.split("```")
-                    json_block_buffer.append(parts[0])
-                    in_json_block = False
-                    if len(parts) > 1 and parts[1].strip():
-                        yield f"data: {json.dumps({'type': 'text', 'delta': parts[1]})}\n\n"
-                else:
-                    json_block_buffer.append(token)
+            if token:
+                buf += token
+
+            while buf:
+                if not in_thought and not in_json_block:
+                    if THINK_START in buf:
+                        before, buf = buf.split(THINK_START, 1)
+                        if before:
+                            yield f"data: {json.dumps({'type': 'text', 'delta': before})}\n\n"
+                        in_thought = True
+                        continue
+                    elif JSON_START in buf:
+                        before, buf = buf.split(JSON_START, 1)
+                        if before:
+                            yield f"data: {json.dumps({'type': 'text', 'delta': before})}\n\n"
+                        in_json_block = True
+                        continue
+                    else:
+                        p1 = longest_prefix_suffix(buf, THINK_START)
+                        p2 = longest_prefix_suffix(buf, JSON_START)
+                        p = max(p1, p2)
+                        if p > 0:
+                            safe = buf[:-p]
+                            buf = buf[-p:]
+                            if safe:
+                                yield f"data: {json.dumps({'type': 'text', 'delta': safe})}\n\n"
+                            break
+                        else:
+                            yield f"data: {json.dumps({'type': 'text', 'delta': buf})}\n\n"
+                            buf = ""
+                            break
+
+                elif in_thought:
+                    if THINK_END in buf:
+                        before, buf = buf.split(THINK_END, 1)
+                        if before:
+                            yield f"data: {json.dumps({'type': 'thought', 'delta': before})}\n\n"
+                        in_thought = False
+                        continue
+                    else:
+                        p = longest_prefix_suffix(buf, THINK_END)
+                        if p > 0:
+                            safe = buf[:-p]
+                            buf = buf[-p:]
+                            if safe:
+                                yield f"data: {json.dumps({'type': 'thought', 'delta': safe})}\n\n"
+                            break
+                        else:
+                            yield f"data: {json.dumps({'type': 'thought', 'delta': buf})}\n\n"
+                            buf = ""
+                            break
+
+                elif in_json_block:
+                    if JSON_END in buf:
+                        before, buf = buf.split(JSON_END, 1)
+                        json_block_buffer.append(before)
+                        in_json_block = False
+                        continue
+                    else:
+                        p = longest_prefix_suffix(buf, JSON_END)
+                        if p > 0:
+                            safe = buf[:-p]
+                            buf = buf[-p:]
+                            if safe:
+                                json_block_buffer.append(safe)
+                            break
+                        else:
+                            json_block_buffer.append(buf)
+                            buf = ""
+                            break
 
             if done:
                 break
+
+        # Flush any remaining buffer characters
+        if buf:
+            if in_thought:
+                yield f"data: {json.dumps({'type': 'thought', 'delta': buf})}\n\n"
+            elif in_json_block:
+                json_block_buffer.append(buf)
+            else:
+                yield f"data: {json.dumps({'type': 'text', 'delta': buf})}\n\n"
 
     except Exception as e:
         logger.exception("Error in handle_coach_chat_stream:")
