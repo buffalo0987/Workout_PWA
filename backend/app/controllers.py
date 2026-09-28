@@ -12,6 +12,8 @@ import os
 import json
 import uuid
 import sqlite3
+import difflib
+import re
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -50,7 +52,11 @@ def get_app_settings(user_id: str = 'default_user') -> Dict[str, Any]:
         "ollama_base_url": ollama_url,
         "sparky_base_url": repo.get_sparky_base_url(),
         "sparky_api_token": repo.get_sparky_api_token(),
-        "unit_preference": repo.get_unit_preference("lb")
+        "unit_preference": repo.get_unit_preference("lb"),
+        "training_goal": repo.get_training_goal(),
+        "experience_level": repo.get_experience_level(),
+        "days_per_week": repo.get_days_per_week(),
+        "body_weight": repo.get_body_weight(),
     }
 
 def update_app_settings(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -66,6 +72,17 @@ def update_app_settings(data: Dict[str, Any]) -> Dict[str, Any]:
         repo.set_sparky_api_token(str(data["sparky_api_token"]).strip())
     if "unit_preference" in data:
         repo.set_unit_preference(str(data["unit_preference"]).strip())
+    if "training_goal" in data:
+        repo.set_training_goal(str(data["training_goal"]).strip())
+    if "experience_level" in data:
+        repo.set_experience_level(str(data["experience_level"]).strip())
+    if "days_per_week" in data:
+        repo.set_days_per_week(str(data["days_per_week"]).strip())
+    if "body_weight" in data:
+        try:
+            repo.set_body_weight(float(data["body_weight"]))
+        except (ValueError, TypeError):
+            pass
     if "gym_equipment" in data:
         repo.set_setting("gym_equipment", str(data["gym_equipment"]).strip(), "List of available gym equipment")
     return get_app_settings(user_id)
@@ -1015,6 +1032,10 @@ def build_coach_prompt(user_id: str, messages: List[Dict[str, Any]]) -> Tuple[st
     active_model = settings_repo.get_selected_ollama_model("qwen2.5:7b")
     ollama_url = settings_repo.get_ollama_base_url()
     unit = settings_repo.get_unit_preference("lb")
+    training_goal = settings_repo.get_training_goal()
+    experience_level = settings_repo.get_experience_level()
+    days_per_week = settings_repo.get_days_per_week()
+    body_weight = settings_repo.get_body_weight()
 
     from backend.app.services.coaching_analytics import compute_athlete_diagnostics
     diagnostics = compute_athlete_diagnostics(user_id, DB_PATH)
@@ -1024,12 +1045,15 @@ def build_coach_prompt(user_id: str, messages: List[Dict[str, Any]]) -> Tuple[st
     history_context = get_recent_workout_history_summary(user_id=user_id, limit=5)
     
     gym_equipment = settings_repo.get_setting("gym_equipment", "")
-    equip_constraint = f"Available Equipment Constraint: {gym_equipment}" if gym_equipment else "Available Equipment: Full commercial gym"
+    equip_constraint = f"Available Equipment: {gym_equipment}" if gym_equipment else "Available Equipment: Full commercial gym (barbells, dumbbells, cables, machines)"
 
     system_prompt = f"""You are Dr. Marcus Vance, an elite, world-class strength and hypertrophy coach (PhD in Exercise Physiology & CSCS). You coach competitive athletes and serious lifters.
 
-ATHLETE CURRENT SETTINGS:
-Weight Unit: {unit}
+ATHLETE PROFILE & SETTINGS:
+Primary Goal: {training_goal}
+Experience Level: {experience_level}
+Target Weekly Frequency: {days_per_week} days/week
+Weight Unit: {unit} (Athlete Weight: {body_weight:g} {unit})
 {equip_constraint}
 
 {diagnostics}
@@ -1050,6 +1074,13 @@ COACHING DIRECTIVES & PERSONA:
    4) Core / Calves last.
 4. ZERO SCHEDULE OVERLAP: Ensure no two routines share the same 'schedule_days'.
 5. ACTIONS AT THE END: If the athlete requests routine changes, modifications, additions, or deletions, explain your scientific rationale in your message first, then provide the exact database mutations at the very end inside a ```json ... ``` block.
+6. COMPLETE MULTI-DAY SPLITS: When the athlete asks for a routine or program from scratch (e.g. "Create a 4-day Upper/Lower split" or "Build me a PPL routine"):
+   - You MUST output ALL days in the split inside the single "routines_to_create" array.
+   - For an Upper/Lower split, generate: "Upper Body A", "Lower Body A", "Upper Body B", "Lower Body B".
+   - For a PPL split, generate: "Push Day", "Pull Day", "Leg Day".
+   - For Full Body, generate: "Full Body A", "Full Body B".
+   - Assign non-overlapping 'schedule_days' (e.g. Upper A = Monday, Lower A = Tuesday, Upper B = Thursday, Lower B = Friday).
+   - Session density: 4 to 6 exercises per routine, 3 to 4 working sets each (15 to 20 total sets per session).
 
 FEW-SHOT COACHING EXEMPLARS:
 
@@ -1087,6 +1118,76 @@ I've sequenced your primary axial load (Barbell Squat) first while your spinal e
   ]
 }}
 ```
+
+--- Example 3 (Complete Multi-Day Split From Scratch) ---
+User: "Build me a complete 4-day Upper/Lower hypertrophy split from scratch."
+Coach:
+Here is your complete 4-day Upper/Lower hypertrophy split calibrated to your {training_goal} goal and {experience_level} experience.
+
+Structure:
+- **Upper A (Monday):** Horizontal push/pull emphasis (Flat Bench & Heavy Row) with lateral delt & arm work.
+- **Lower A (Tuesday):** Quad-dominant (Barbell Squat) with posterior chain accessory (Hamstring Curls & Calves).
+- **Wednesday:** Active recovery / rest.
+- **Upper B (Thursday):** Vertical push/pull emphasis (Overhead Press & Lat Pulldown) with incline pressing.
+- **Lower B (Friday):** Hip-hinge posterior chain emphasis (Romanian Deadlift) with quad accessory (Leg Press).
+- **Weekend:** Systemic recovery & fueling.
+
+Each session features 5 exercises and 15–16 total sets to hit the optimal 10–20 weekly set hypertrophy landmark per muscle group without junk volume:
+
+```json
+{{
+  "routines_to_create": [
+    {{
+      "title": "Upper Body A (Horizontal)",
+      "description": "Chest & Upper Back Horizontal Power",
+      "schedule_days": ["Monday"],
+      "exercises": [
+        {{"name": "Barbell Bench Press", "target_sets": 3, "min_reps": 6, "max_reps": 8, "rest_seconds": 150}},
+        {{"name": "Barbell Bent Over Row", "target_sets": 3, "min_reps": 8, "max_reps": 10, "rest_seconds": 120}},
+        {{"name": "Incline Dumbbell Press", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90}},
+        {{"name": "Dumbbell Lateral Raise", "target_sets": 4, "min_reps": 12, "max_reps": 15, "rest_seconds": 60}},
+        {{"name": "Triceps Pushdown", "target_sets": 3, "min_reps": 10, "max_reps": 12, "rest_seconds": 60}}
+      ]
+    }},
+    {{
+      "title": "Lower Body A (Squat Focus)",
+      "description": "Quadriceps and Calves Priority",
+      "schedule_days": ["Tuesday"],
+      "exercises": [
+        {{"name": "Barbell Squat", "target_sets": 3, "min_reps": 6, "max_reps": 8, "rest_seconds": 180}},
+        {{"name": "Romanian Deadlift", "target_sets": 3, "min_reps": 8, "max_reps": 10, "rest_seconds": 120}},
+        {{"name": "Leg Press", "target_sets": 3, "min_reps": 10, "max_reps": 12, "rest_seconds": 90}},
+        {{"name": "Lying Leg Curl", "target_sets": 3, "min_reps": 10, "max_reps": 12, "rest_seconds": 90}},
+        {{"name": "Standing Calf Raise", "target_sets": 4, "min_reps": 12, "max_reps": 15, "rest_seconds": 60}}
+      ]
+    }},
+    {{
+      "title": "Upper Body B (Vertical)",
+      "description": "Shoulders & Lat Width Priority",
+      "schedule_days": ["Thursday"],
+      "exercises": [
+        {{"name": "Overhead Press", "target_sets": 3, "min_reps": 6, "max_reps": 8, "rest_seconds": 150}},
+        {{"name": "Lat Pulldown", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90}},
+        {{"name": "Dips", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90}},
+        {{"name": "Cable Face Pull", "target_sets": 3, "min_reps": 12, "max_reps": 15, "rest_seconds": 60}},
+        {{"name": "Incline Dumbbell Bicep Curl", "target_sets": 3, "min_reps": 10, "max_reps": 12, "rest_seconds": 60}}
+      ]
+    }},
+    {{
+      "title": "Lower Body B (Hinge Focus)",
+      "description": "Posterior Chain & Glute Priority",
+      "schedule_days": ["Friday"],
+      "exercises": [
+        {{"name": "Barbell Deadlift", "target_sets": 3, "min_reps": 5, "max_reps": 6, "rest_seconds": 180}},
+        {{"name": "Bulgarian Split Squat", "target_sets": 3, "min_reps": 8, "max_reps": 10, "rest_seconds": 90}},
+        {{"name": "Leg Extension", "target_sets": 3, "min_reps": 10, "max_reps": 15, "rest_seconds": 90}},
+        {{"name": "Seated Calf Raise", "target_sets": 4, "min_reps": 12, "max_reps": 15, "rest_seconds": 60}},
+        {{"name": "Hanging Knee Raise", "target_sets": 3, "min_reps": 12, "max_reps": 15, "rest_seconds": 60}}
+      ]
+    }}
+  ]
+}}
+```
 """
 
     history_str = ""
@@ -1099,6 +1200,100 @@ I've sequenced your primary axial load (Barbell Squat) first while your spinal e
     full_prompt = system_prompt + "\n\nCONVERSATION HISTORY:" + history_str + "\nCoach:"
     return full_prompt, active_model, ollama_url
 
+def resolve_or_create_exercise(ex_data: Dict[str, Any], user_id: str, db_cursor: sqlite3.Cursor, all_exercises: Dict[str, str]) -> str:
+    raw_name = (ex_data.get("name") or "").strip()
+    if not raw_name:
+        raw_name = "Custom Exercise"
+    
+    ex_name_lower = raw_name.lower()
+    
+    prov_id = ex_data.get("exercise_id")
+    if prov_id and len(prov_id) > 5 and prov_id in all_exercises.values():
+        return prov_id
+
+    # 1. Exact match
+    if ex_name_lower in all_exercises:
+        return all_exercises[ex_name_lower]
+
+    # 2. Token-set overlap match (e.g. "Incline Dumbbell Bench Press" vs "Dumbbell Incline Bench Press")
+    tokens_query = set(ex_name_lower.replace("-", " ").replace("(", "").replace(")", "").split())
+    best_overlap_id = None
+    best_overlap_count = 0
+    for db_name, db_id in all_exercises.items():
+        db_tokens = set(db_name.replace("-", " ").replace("(", "").replace(")", "").split())
+        overlap = len(tokens_query.intersection(db_tokens))
+        if overlap > best_overlap_count and overlap >= min(2, len(tokens_query)):
+            if tokens_query.issubset(db_tokens) or db_tokens.issubset(tokens_query) or (overlap / len(tokens_query)) >= 0.6:
+                best_overlap_count = overlap
+                best_overlap_id = db_id
+    if best_overlap_id:
+        return best_overlap_id
+
+    # 3. Difflib close match
+    close_matches = difflib.get_close_matches(ex_name_lower, all_exercises.keys(), n=1, cutoff=0.70)
+    if close_matches:
+        return all_exercises[close_matches[0]]
+
+    # 4. Auto-creation fallback
+    new_id = str(uuid.uuid4())
+    clean_title = raw_name.title()
+    
+    nl = ex_name_lower
+    category = "barbell"
+    if any(k in nl for k in ["dumbbell", "db "]):
+        category = "dumbbell"
+    elif any(k in nl for k in ["cable", "pulley", "pushdown", "pulldown", "crossover"]):
+        category = "cable"
+    elif any(k in nl for k in ["machine", "smith", "press machine", "hack"]):
+        category = "machine"
+    elif any(k in nl for k in ["pull-up", "chin-up", "dip", "push-up", "crunch", "hanging", "plank", "bodyweight"]):
+        category = "bodyweight"
+
+    primary_muscle = "other"
+    if any(k in nl for k in ["bench", "chest", "fly", "pushup", "push-up", "pec", "dip"]):
+        primary_muscle = "pectorals"
+    elif any(k in nl for k in ["squat", "quad", "leg press", "lunge", "hack"]):
+        primary_muscle = "quadriceps"
+    elif any(k in nl for k in ["deadlift", "rdl", "hamstring", "leg curl", "good morning"]):
+        primary_muscle = "hamstrings"
+    elif any(k in nl for k in ["row", "pull", "lat", "chin", "face pull", "back"]):
+        primary_muscle = "lats"
+    elif any(k in nl for k in ["shoulder", "overhead", "ohp", "press", "lateral", "delt"]):
+        primary_muscle = "deltoids"
+    elif any(k in nl for k in ["curl", "bicep"]):
+        primary_muscle = "biceps"
+    elif any(k in nl for k in ["tricep", "pushdown", "skull", "extension", "close-grip"]):
+        primary_muscle = "triceps"
+    elif any(k in nl for k in ["calf", "calves"]):
+        primary_muscle = "calves"
+    elif any(k in nl for k in ["abs", "crunch", "plank", "core"]):
+        primary_muscle = "abdominals"
+
+    db_cursor.execute("""
+        INSERT INTO exercises (id, user_id, name, category, primary_muscle, secondary_muscles, is_custom, description)
+        VALUES (?, ?, ?, ?, ?, '[]', 1, 'Auto-created by AI Coach')
+    """, (new_id, user_id, clean_title, category, primary_muscle))
+    
+    all_exercises[ex_name_lower] = new_id
+    all_exercises[clean_title.lower()] = new_id
+    return new_id
+
+def sanitize_routine_exercise(ex: Dict[str, Any], exercise_id: str, order_idx: int) -> Dict[str, Any]:
+    target_sets = max(1, min(int(ex.get("target_sets", 3)), 6))
+    min_reps = max(1, min(int(ex.get("min_reps", 8)), 30))
+    max_reps = max(min_reps, min(int(ex.get("max_reps", 12)), 35))
+    rest_seconds = max(30, min(int(ex.get("rest_seconds", 90)), 300))
+    
+    return {
+        "exercise_id": exercise_id,
+        "name": ex.get("name"),
+        "order_index": order_idx,
+        "target_sets": target_sets,
+        "min_reps": min_reps,
+        "max_reps": max_reps,
+        "rest_seconds": rest_seconds
+    }
+
 def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, Any]:
     routines_to_create = parsed.get("routines_to_create", [])
     routines_to_update = parsed.get("routines_to_update", [])
@@ -1110,26 +1305,20 @@ def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, A
         cursor.execute("SELECT id, name FROM exercises")
         all_ex = {r["name"].lower(): r["id"] for r in cursor.fetchall()}
         
-        def match_exercises(rt):
+        def match_and_sanitize_exercises(rt):
             exercises_payload = []
-            for ex in rt.get("exercises", []):
-                ex_name = ex.get("name", "").lower()
-                matched_id = ex.get("exercise_id")
-                if not matched_id or len(matched_id) < 5:
-                    matched_id = None
-                    for db_name, db_id in all_ex.items():
-                        if ex_name in db_name or db_name in ex_name:
-                            matched_id = db_id
-                            break
-                if matched_id:
-                    ex["exercise_id"] = matched_id
-                    exercises_payload.append(ex)
+            for idx, ex in enumerate(rt.get("exercises", [])):
+                resolved_id = resolve_or_create_exercise(ex, user_id, cursor, all_ex)
+                clean_ex = sanitize_routine_exercise(ex, resolved_id, idx)
+                exercises_payload.append(clean_ex)
+            conn.commit()
             return exercises_payload
 
         for rt in routines_to_create:
-            exercises_payload = match_exercises(rt)
+            exercises_payload = match_and_sanitize_exercises(rt)
             if exercises_payload:
                 title = rt.get("title", "AI Generated Routine")
+                tot_sets = sum(e["target_sets"] for e in exercises_payload)
                 create_routine({
                     "user_id": user_id,
                     "title": title,
@@ -1137,16 +1326,17 @@ def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, A
                     "schedule_days": rt.get("schedule_days", []),
                     "exercises": exercises_payload
                 })
-                details.append(f"Created '{title}'")
+                details.append(f"Created '{title}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
                 
         for rt in routines_to_update:
             rt_id = rt.get("id")
             if rt_id:
-                exercises_payload = match_exercises(rt)
+                exercises_payload = match_and_sanitize_exercises(rt)
                 if exercises_payload:
+                    tot_sets = sum(e["target_sets"] for e in exercises_payload)
                     rt["exercises"] = exercises_payload
                     update_routine(rt_id, rt)
-                    details.append(f"Updated '{rt.get('title', rt_id)}'")
+                    details.append(f"Updated '{rt.get('title', rt_id)}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
                     
         for rt_id in routines_to_delete:
             if rt_id:

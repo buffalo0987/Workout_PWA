@@ -72,3 +72,32 @@ class SettingsRepository:
 
     def set_unit_preference(self, unit: str):
         self.set_setting("default_unit_preference", unit, "Weight unit preference (lbs or kg)")
+
+    def get_training_goal(self, fallback: str = "Hypertrophy (Muscle Growth)") -> str:
+        return self.get_setting("training_goal", fallback)
+
+    def set_training_goal(self, goal: str):
+        self.set_setting("training_goal", goal, "Primary training goal")
+
+    def get_experience_level(self, fallback: str = "Intermediate (1-3 yrs)") -> str:
+        return self.get_setting("experience_level", fallback)
+
+    def set_experience_level(self, level: str):
+        self.set_setting("experience_level", level, "Lifter experience level")
+
+    def get_days_per_week(self, fallback: str = "4") -> str:
+        return self.get_setting("days_per_week", fallback)
+
+    def set_days_per_week(self, days: str):
+        self.set_setting("days_per_week", str(days), "Preferred weekly workout frequency")
+
+    def get_body_weight(self, fallback: float = 145.0) -> float:
+        val = self.get_setting("body_weight", str(fallback))
+        try:
+            return float(val) if val else fallback
+        except (ValueError, TypeError):
+            return fallback
+
+    def set_body_weight(self, weight: float):
+        self.set_setting("body_weight", str(weight), "Athlete body weight")
+

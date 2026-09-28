@@ -173,6 +173,23 @@ async function loadSettings() {
     if (unitSelect) unitSelect.value = data.unit_preference || 'kg';
     if (weightLabel) weightLabel.textContent = `Weight (${data.unit_preference || 'kg'})`;
 
+    const goalSelect = document.getElementById('settingTrainingGoal');
+    const levelSelect = document.getElementById('settingExperienceLevel');
+    const daysSelect = document.getElementById('settingDaysPerWeek');
+    const bodyWeightInput = document.getElementById('settingBodyWeight');
+    if (goalSelect && (data.training_goal || data.settings?.training_goal)) {
+      goalSelect.value = data.training_goal || data.settings?.training_goal;
+    }
+    if (levelSelect && (data.experience_level || data.settings?.experience_level)) {
+      levelSelect.value = data.experience_level || data.settings?.experience_level;
+    }
+    if (daysSelect && (data.days_per_week || data.settings?.days_per_week)) {
+      daysSelect.value = data.days_per_week || data.settings?.days_per_week;
+    }
+    if (bodyWeightInput) {
+      bodyWeightInput.value = data.body_weight || data.settings?.body_weight || '145';
+    }
+
     if (modelSelect) {
       modelSelect.innerHTML = '';
       state.availableModels.forEach((m) => {
@@ -251,6 +268,10 @@ window.saveSettings = async function() {
   const selectedModel = document.getElementById('settingOllamaModel')?.value;
   const unitPref = document.getElementById('settingUnitPref')?.value;
   const gymEquip = document.getElementById('settingGymEquipment')?.value;
+  const trainingGoal = document.getElementById('settingTrainingGoal')?.value;
+  const expLevel = document.getElementById('settingExperienceLevel')?.value;
+  const daysPerWeek = document.getElementById('settingDaysPerWeek')?.value;
+  const bodyWeight = parseFloat(document.getElementById('settingBodyWeight')?.value || '145');
   const profileName = document.getElementById('settingProfileName')?.value || 'default_user';
   let profileChanged = false;
   if (profileName !== API_USER) {
@@ -273,6 +294,10 @@ window.saveSettings = async function() {
         selected_ollama_model: selectedModel,
         unit_preference: unitPref,
         gym_equipment: gymEquip,
+        training_goal: trainingGoal,
+        experience_level: expLevel,
+        days_per_week: daysPerWeek,
+        body_weight: bodyWeight,
       }),
     });
 
