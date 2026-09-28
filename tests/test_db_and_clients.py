@@ -52,7 +52,7 @@ class TestDatabaseAndSettings(unittest.TestCase):
         tables = {row[0] for row in cursor.fetchall()}
         
         required_tables = {
-            "app_settings",
+            "user_settings",
             "users",
             "exercises",
             "routines",

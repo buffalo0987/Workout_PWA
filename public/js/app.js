@@ -838,9 +838,10 @@ window.requestProgressionSuggestion = async function() {
     if (suggestion) {
       state.aiSuggestion = suggestion;
       if (badge) {
-        const unitPref = state.settings.unit_preference || 'kg';
-const displayWeight = unitPref === 'lb' ? kgToLb(suggestion.suggested_weight) : suggestion.suggested_weight;
-badge.innerHTML = `⚡ Target: <strong>${displayWeight}${unitPref}</strong> &times; <strong>${suggestion.target_reps}</strong> reps (${suggestion.strategy})`;
+        const displayWeight = (suggestion.unit && (suggestion.unit === unitPref || (unitPref === 'lb' && suggestion.unit.startsWith('lb'))))
+          ? suggestion.suggested_weight
+          : (unitPref === 'lb' ? kgToLb(suggestion.suggested_weight) : suggestion.suggested_weight);
+        badge.innerHTML = `⚡ Target: <strong>${displayWeight}${unitPref}</strong> &times; <strong>${suggestion.target_reps}</strong> reps (${suggestion.strategy})`;
       }
       if (rationaleBox) {
         rationaleBox.textContent = `AI Coach (${suggestion.model_used}): ${suggestion.rationale}`;

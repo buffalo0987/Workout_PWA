@@ -500,6 +500,133 @@ def get_recent_sparky_nutrition_averages(user_id: str = "default_user", days: in
         "days_averaged": days_found,
     }
 
+def calculate_double_progression(
+    exercise_id: str,
+    exercise_info: Optional[Dict[str, Any]],
+    past_sets: List[Dict[str, Any]],
+    unit: str = "lb",
+    threshold_rpe: float = 8.5
+) -> Dict[str, Any]:
+    """
+    Deterministic Double Progression Engine.
+    Executes instantly in Python (<1ms) instead of sequential LLM inference loops.
+    
+    Rules:
+    - If no history: establish reasonable category-based baseline load.
+    - If last_reps >= max_reps and last_rpe <= threshold_rpe:
+        Advance weight (+5 lb / +2.5 kg barbell, +2.5 lb / +1.0 kg dumbbell/cable)
+        and reset reps to min_reps.
+    - If last_rpe >= 9.5 or last_reps < min_reps:
+        High exertion / fatigue: Maintain weight to consolidate form.
+    - If min_reps <= last_reps < max_reps and last_rpe < 9.5:
+        Advance reps towards max_reps (last_reps + 1).
+    """
+    category = (exercise_info.get("category") if exercise_info else "barbell") or "barbell"
+    ex_name = exercise_info.get("name") if exercise_info else f"Exercise {exercise_id}"
+
+    # Determine routine target rep bracket from routine_exercises if configured
+    min_reps = 8
+    max_reps = 12
+    suggested_sets = 3
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT target_sets, min_reps, max_reps
+                FROM routine_exercises
+                WHERE exercise_id = ?
+                LIMIT 1
+            """, (exercise_id,))
+            re_row = cursor.fetchone()
+            if re_row:
+                suggested_sets = int(re_row["target_sets"] or 3)
+                min_reps = int(re_row["min_reps"] or 8)
+                max_reps = int(re_row["max_reps"] or 12)
+    except Exception:
+        pass
+
+    # Weight increments by category & unit
+    is_metric = (unit.lower() == "kg")
+    category_lower = category.lower()
+
+    if "barbell" in category_lower:
+        weight_increment = 2.5 if is_metric else 5.0
+    elif any(k in category_lower for k in ["dumbbell", "cable", "machine"]):
+        weight_increment = 1.0 if is_metric else 2.5
+    else:  # bodyweight / other
+        weight_increment = 1.0 if is_metric else 2.5
+
+    # Case 1: No previous sets recorded (First session)
+    if not past_sets:
+        if "barbell" in category_lower:
+            if any(k in ex_name.lower() for k in ["squat", "deadlift"]):
+                base_wt = 60.0 if is_metric else 135.0
+            elif "bench" in ex_name.lower():
+                base_wt = 40.0 if is_metric else 95.0
+            elif any(k in ex_name.lower() for k in ["press", "row"]):
+                base_wt = 30.0 if is_metric else 65.0
+            else:
+                base_wt = 20.0 if is_metric else 45.0
+        elif "dumbbell" in category_lower:
+            base_wt = 10.0 if is_metric else 20.0
+        elif any(k in category_lower for k in ["cable", "machine"]):
+            base_wt = 15.0 if is_metric else 30.0
+        else:
+            base_wt = 0.0
+
+        return {
+            "suggested_weight": round(base_wt, 1),
+            "target_reps": f"{min_reps}-{max_reps}",
+            "suggested_sets": suggested_sets,
+            "strategy": "baseline",
+            "rationale": f"Initial baseline for {ex_name}. Target {min_reps}-{max_reps} controlled reps to gauge capacity."
+        }
+
+    # Case 2: Past sets exist
+    last_weight = float(past_sets[0]["weight"])
+    last_reps = int(past_sets[0]["reps"])
+    last_rpe = float(past_sets[0]["rpe"]) if past_sets[0].get("rpe") is not None else 8.0
+
+    # Rule A: Top of rep bracket reached with controlled fatigue
+    if last_reps >= max_reps and last_rpe <= threshold_rpe:
+        new_weight = round(last_weight + weight_increment, 1)
+        return {
+            "suggested_weight": new_weight,
+            "target_reps": f"{min_reps}-{min_reps + 2}",
+            "suggested_sets": suggested_sets,
+            "strategy": "weight_increase",
+            "rationale": (
+                f"Bracket target hit ({last_reps} reps @ RPE {last_rpe} ≤ {threshold_rpe}). "
+                f"Add +{weight_increment:g} {unit} and reset target to {min_reps} reps."
+            )
+        }
+
+    # Rule B: High exertion / fatigue overreach
+    if last_rpe >= 9.5 or last_reps < min_reps:
+        return {
+            "suggested_weight": round(last_weight, 1),
+            "target_reps": f"{min_reps}-{max_reps}",
+            "suggested_sets": suggested_sets,
+            "strategy": "maintain",
+            "rationale": (
+                f"High exertion recorded (RPE {last_rpe} on {last_reps} reps). "
+                f"Maintain {last_weight:g} {unit} to build technical capacity before adding load."
+            )
+        }
+
+    # Rule C: Within rep bracket (Rep Progression)
+    target_next_reps = min(last_reps + 1, max_reps)
+    return {
+        "suggested_weight": round(last_weight, 1),
+        "target_reps": f"{target_next_reps}-{max_reps}",
+        "suggested_sets": suggested_sets,
+        "strategy": "rep_increase",
+        "rationale": (
+            f"Solid execution ({last_reps} reps @ RPE {last_rpe}). "
+            f"Hold load at {last_weight:g} {unit} and aim for {target_next_reps} reps."
+        )
+    }
+
 def suggest_workout_progression(data: Dict[str, Any]) -> Dict[str, Any]:
     exercise_ids = data.get("exercise_ids") or []
     if isinstance(exercise_ids, str):
@@ -507,9 +634,11 @@ def suggest_workout_progression(data: Dict[str, Any]) -> Dict[str, Any]:
 
     user_id = data.get("user_id") or "default_user"
     settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
-    active_model = data.get("model") or settings_repo.get_selected_ollama_model("qwen3:14b")
-    ollama_url = settings_repo.get_ollama_base_url()
-    unit = settings_repo.get_unit_preference("lbs")
+    unit = settings_repo.get_unit_preference("lb")
+    try:
+        threshold_rpe = float(settings_repo.get_setting("double_progression_threshold_rpe", "8.5"))
+    except (ValueError, TypeError):
+        threshold_rpe = 8.5
 
     # 1. Fetch 3-day Sparky nutrition summary
     nutrition_avg = get_recent_sparky_nutrition_averages(user_id=user_id, days=3)
@@ -522,63 +651,37 @@ def suggest_workout_progression(data: Dict[str, Any]) -> Dict[str, Any]:
         
         # 2. Fetch past sets
         past_sets = get_past_exercise_history(ex_id, limit_sessions=3)
-        last_weight = past_sets[0]["weight"] if past_sets else 135.0
-        last_reps = past_sets[0]["reps"] if past_sets else 10
-        last_rpe = past_sets[0]["rpe"] if past_sets and past_sets[0]["rpe"] else 8.0
-
-        # 3. Formulate Prompt for Ollama
-        prompt = f"""
-Analyze the athlete's progressive overload target for {ex_name}.
-Units: All weights are strictly in {unit}.
-Recent Nutrition (3-day average):
-- Calories: {nutrition_avg['avg_calories']} kcal
-- Protein: {nutrition_avg['avg_protein_g']} g
-- Carbs: {nutrition_avg['avg_carbs_g']} g
-
-Previous Performance:
-- Last Weight: {last_weight} {unit}
-- Last Reps: {last_reps}
-- Last RPE: {last_rpe}
-
-Return JSON with exact keys:
-"suggested_weight" (number in {unit}),
-"target_reps" (string e.g. "8-10"),
-"suggested_sets" (integer),
-"strategy" (string: "weight_increase"|"rep_increase"|"maintain"|"deload"),
-"rationale" (string explaining how nutrition and past RPE drove this decision in {unit})
-"""
-        context_data = {
-            "current_weight": last_weight,
-            "target_rep_range": [8, 12],
-            "last_reps": last_reps,
-            "last_rpe": last_rpe,
-            "nutrition": nutrition_avg,
-            "unit": unit
-        }
-
-        # 4. Generate with Ollama
-        ollama_response = generate_completion(
-            prompt=prompt,
-            model=active_model,
-            base_url=ollama_url,
-            context_data=context_data,
-            raw_json_format=True
+        
+        # 3. Calculate Double Progression deterministically in Python
+        prog = calculate_double_progression(
+            exercise_id=ex_id,
+            exercise_info=exercise_info,
+            past_sets=past_sets,
+            unit=unit,
+            threshold_rpe=threshold_rpe
         )
 
-        parsed = ollama_response.get("parsed_json") or {}
         rec_item = {
             "exercise_id": ex_id,
             "exercise_name": ex_name,
-            "suggested_weight": parsed.get("suggested_weight", last_weight),
-            "target_reps": parsed.get("target_reps", "8-12"),
-            "suggested_sets": parsed.get("suggested_sets", 3),
-            "strategy": parsed.get("strategy", "maintain"),
-            "rationale": parsed.get("rationale", f"Progressive overload target in {unit}"),
+            "suggested_weight": prog["suggested_weight"],
+            "target_reps": prog["target_reps"],
+            "suggested_sets": prog["suggested_sets"],
+            "strategy": prog["strategy"],
+            "rationale": prog["rationale"],
             "unit": unit,
-            "model_used": ollama_response.get("model"),
-            "is_fallback": ollama_response.get("is_fallback", False)
+            "model_used": "DoubleProgressionEngine (Python)",
+            "is_fallback": False
         }
         suggestions.append(rec_item)
+
+        context_data = {
+            "current_weight": past_sets[0]["weight"] if past_sets else 0.0,
+            "last_reps": past_sets[0]["reps"] if past_sets else 0,
+            "last_rpe": past_sets[0]["rpe"] if past_sets else 8.0,
+            "nutrition": nutrition_avg,
+            "unit": unit
+        }
 
         with get_db() as conn:
             cursor = conn.cursor()
@@ -592,14 +695,14 @@ Return JSON with exact keys:
                 "progressive_overload",
                 json.dumps(context_data),
                 json.dumps(rec_item),
-                ollama_response.get("content"),
-                ollama_response.get("model", active_model)
+                "Calculated deterministically via Double Progression Engine",
+                "DoubleProgressionEngine (Python)"
             ))
             conn.commit()
 
     return {
         "nutrition_averages": nutrition_avg,
-        "active_model": active_model,
+        "active_model": "DoubleProgressionEngine (Python)",
         "unit": unit,
         "suggestions": suggestions
     }
@@ -923,21 +1026,12 @@ def build_coach_prompt(user_id: str, messages: List[Dict[str, Any]]) -> Tuple[st
     gym_equipment = settings_repo.get_setting("gym_equipment", "")
     equip_constraint = f"Available Equipment Constraint: {gym_equipment}" if gym_equipment else "Available Equipment: Full commercial gym"
 
-    sparky_summary = ""
-    try:
-        if settings_repo.get_sparky_base_url() and settings_repo.get_sparky_api_token():
-            nutr = get_recent_sparky_nutrition_averages(user_id=user_id, days=3)
-            if nutr.get("days_averaged", 0) > 0:
-                sparky_summary = f"Recent Nutrition (3-day SparkyFitness average): {nutr['avg_calories']} kcal/day, {nutr['avg_protein_g']}g protein/day\n"
-    except Exception:
-        pass
-
     system_prompt = f"""You are Dr. Marcus Vance, an elite, world-class strength and hypertrophy coach (PhD in Exercise Physiology & CSCS). You coach competitive athletes and serious lifters.
 
 ATHLETE CURRENT SETTINGS:
 Weight Unit: {unit}
 {equip_constraint}
-{sparky_summary}
+
 {diagnostics}
 
 CURRENT ATHLETE ROUTINES:
