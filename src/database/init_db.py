@@ -50,6 +50,21 @@ def init_database(db_path: str = DEFAULT_DB_PATH):
     else:
         print("[!] Warning: default setting selected_ollama_model was not seeded!")
 
+    # Ensure coach_messages table exists (for existing database upgrades)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS coach_messages (
+            id VARCHAR(36) PRIMARY KEY,
+            user_id VARCHAR(36) NOT NULL,
+            role VARCHAR(16) NOT NULL,
+            content TEXT NOT NULL,
+            thought TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_coach_messages_user_created ON coach_messages(user_id, created_at)")
+    conn.commit()
+
     conn.close()
     print("[+] Database initialized successfully.")
 

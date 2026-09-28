@@ -132,6 +132,7 @@ window.switchView = function(viewId) {
 
   if (viewId === 'view-coach') {
     loadCoachingInsights();
+    loadCoachChatHistory();
   } else if (viewId === 'view-routines') {
     loadRoutines();
   } else if (viewId === 'view-settings') {
@@ -1048,6 +1049,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSettings();
   updateOfflineCounter();
   syncOfflineQueue();
+  loadCoachChatHistory();
 });
 
 // =============================================================================
@@ -1340,6 +1342,91 @@ function formatCoachMarkdown(text) {
     .replace(/\n\n/g, '<br><br>')
     .replace(/\n/g, '<br>');
 }
+
+async function loadCoachChatHistory() {
+  const container = document.getElementById('coachChatHistory');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`/api/coaching/history?user_id=${API_USER}`);
+    if (!res.ok) return;
+    const json = await res.json();
+    const messages = json.data || [];
+
+    if (messages.length === 0) {
+      container.innerHTML = `
+        <div style="background: var(--color-card-border); align-self: flex-start; padding: 8px 12px; border-radius: 12px; max-width: 85%; font-size: 0.9rem;">
+          Hello! I'm Dr. Marcus Vance, your AI Coach. How can I help you optimize your training, analyze diagnostics, or adjust routines today?
+        </div>
+      `;
+      chatHistory = [];
+      return;
+    }
+
+    container.innerHTML = '';
+    chatHistory = [];
+
+    for (const msg of messages) {
+      chatHistory.push({ role: msg.role, content: msg.content });
+      if (msg.role === 'user') {
+        appendChatMessage(msg.content, 'user');
+      } else if (msg.role === 'assistant') {
+        const msgDiv = appendChatMessage('', 'coach');
+        msgDiv.innerHTML = '';
+
+        if (msg.thought && msg.thought.trim()) {
+          const tb = document.createElement('details');
+          tb.className = 'coach-thought-box';
+          tb.innerHTML = `
+            <summary class="thought-summary">
+              <span class="thought-brain-icon">🧠</span>
+              <span class="thought-label">Coach Thought Process</span>
+            </summary>
+            <div class="thought-content"></div>
+          `;
+          tb.querySelector('.thought-content').textContent = msg.thought.trim();
+          msgDiv.appendChild(tb);
+        }
+
+        const bodyDiv = document.createElement('div');
+        bodyDiv.className = 'coach-text-body';
+        bodyDiv.innerHTML = formatCoachMarkdown(msg.content);
+        msgDiv.appendChild(bodyDiv);
+      } else if (msg.role === 'system') {
+        appendChatMessage(msg.content, 'system');
+      }
+    }
+
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    console.warn('Failed to load coaching chat history:', err);
+  }
+}
+
+async function resetCoachChat() {
+  if (!confirm('Start a new coaching conversation? This will clear the active chat history.')) {
+    return;
+  }
+
+  try {
+    await fetch(`/api/coaching/history?user_id=${API_USER}`, { method: 'DELETE' });
+  } catch (err) {
+    console.warn('Failed to delete coaching chat history on server:', err);
+  }
+
+  chatHistory = [];
+  const container = document.getElementById('coachChatHistory');
+  if (container) {
+    container.innerHTML = `
+      <div style="background: var(--color-card-border); align-self: flex-start; padding: 8px 12px; border-radius: 12px; max-width: 85%; font-size: 0.9rem;">
+        Hello! I'm Dr. Marcus Vance, your AI Coach. Starting a fresh conversation. What are our goals for today?
+      </div>
+    `;
+  }
+}
+
+window.loadCoachChatHistory = loadCoachChatHistory;
+window.resetCoachChat = resetCoachChat;
 
 async function sendCoachMessage() {
   const inputEl = document.getElementById('coachChatInput');

@@ -177,6 +177,13 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"records": records})
                 return
 
+            if path == "/api/coaching/history":
+                user_id = query.get("user_id", ["default_user"])[0]
+                from backend.app.controllers import get_coach_chat_history
+                history = get_coach_chat_history(user_id)
+                self._send_json(200, {"data": history, "count": len(history)})
+                return
+
             if not path.startswith("/api/"):
                 self._serve_static_file(path)
                 return
@@ -192,6 +199,13 @@ class WorkoutAPIRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         try:
+
+            if path == "/api/coaching/history":
+                user_id = query.get("user_id", ["default_user"])[0]
+                from backend.app.controllers import clear_coach_chat_history
+                clear_coach_chat_history(user_id)
+                self._send_json(200, {"status": "success", "message": "Coaching chat history cleared."})
+                return
 
             if path == "/api/settings/data":
                 user_id = query.get("user_id", ["default_user"])[0]

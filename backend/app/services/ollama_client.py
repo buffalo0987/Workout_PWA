@@ -159,3 +159,98 @@ def stream_completion(
                     break
             except Exception:
                 continue
+
+def stream_chat(
+    messages: List[Dict[str, str]],
+    model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    temperature: float = 0.3
+):
+    """
+    Generator yielding token strings as they arrive from Ollama native multi-turn streaming endpoint (/api/chat).
+    Yields: {"token": token_str, "done": bool}
+    """
+    if isinstance(messages, str):
+        messages = [{"role": "user", "content": messages}]
+
+    endpoint = f"{base_url.rstrip('/')}/api/chat"
+    payload = {
+        "model": model or DEFAULT_MODEL,
+        "messages": messages,
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+            "num_ctx": 8192
+        }
+    }
+    data_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=data_bytes,
+        headers={"Content-Type": "application/json", "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        for line in response:
+            if not line:
+                continue
+            try:
+                line_str = line.decode("utf-8").strip()
+                if not line_str:
+                    continue
+                chunk = json.loads(line_str)
+                msg = chunk.get("message", {})
+                token = msg.get("content", "")
+                done = chunk.get("done", False)
+                yield {"token": token, "done": done}
+                if done:
+                    break
+            except Exception:
+                continue
+
+def chat_completion(
+    messages: List[Dict[str, str]],
+    model: str = DEFAULT_MODEL,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    temperature: float = 0.3
+) -> Dict[str, Any]:
+    """
+    Synchronous multi-turn completion using Ollama /api/chat.
+    """
+    if isinstance(messages, str):
+        messages = [{"role": "user", "content": messages}]
+
+    endpoint = f"{base_url.rstrip('/')}/api/chat"
+    payload = {
+        "model": model or DEFAULT_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_ctx": 8192
+        }
+    }
+    data_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=data_bytes,
+        headers={"Content-Type": "application/json", "Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            res_json = json.loads(response.read().decode("utf-8"))
+            msg = res_json.get("message", {})
+            raw_response = msg.get("content", "")
+            return {
+                "content": raw_response,
+                "model": res_json.get("model", model),
+                "is_fallback": False
+            }
+    except Exception as e:
+        logger.warning(f"Ollama chat call failed ({e}). Returning fallback.")
+        return {
+            "content": f"I am currently offline or experiencing a connection issue ({e}).",
+            "model": f"{model} (offline fallback: {e})",
+            "is_fallback": True
+        }

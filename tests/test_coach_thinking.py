@@ -27,9 +27,9 @@ class TestCoachThinking(unittest.TestCase):
             os.remove(TEST_DB)
 
     @patch("backend.app.controllers.build_coach_prompt")
-    @patch("backend.app.services.ollama_client.stream_completion")
+    @patch("backend.app.services.ollama_client.stream_chat")
     def test_handle_coach_chat_stream_with_thinking(self, mock_stream, mock_prompt):
-        mock_prompt.return_value = ("Test Prompt", "qwen2.5:7b", "http://localhost:11434")
+        mock_prompt.return_value = ([{"role": "user", "content": "Test"}], "qwen2.5:7b", "http://localhost:11434")
 
         # Simulate stream chunks with split tags
         simulated_tokens = [
@@ -70,9 +70,9 @@ class TestCoachThinking(unittest.TestCase):
         self.assertNotIn("```json", full_text)
 
     @patch("backend.app.controllers.build_coach_prompt")
-    @patch("backend.app.controllers.generate_completion")
+    @patch("backend.app.services.ollama_client.chat_completion")
     def test_handle_coach_chat_static_fallback(self, mock_gen, mock_prompt):
-        mock_prompt.return_value = ("Test Prompt", "qwen2.5:7b", "http://localhost:11434")
+        mock_prompt.return_value = ([{"role": "user", "content": "Test"}], "qwen2.5:7b", "http://localhost:11434")
         raw_response = (
             "<think>\n1. Athlete wants more bicep volume.\n2. Add Incline DB Curls.\n</think>\n"
             "I have updated your routine to incorporate Incline Dumbbell Curls."

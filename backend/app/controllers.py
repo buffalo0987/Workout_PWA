@@ -16,8 +16,11 @@ import difflib
 import re
 import urllib.request
 import urllib.error
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from src.models.settings import SettingsRepository
 from backend.app.services.ollama_client import generate_completion, get_available_models
@@ -1027,7 +1030,37 @@ def format_routines_yaml(routines: List[Dict[str, Any]]) -> str:
             lines.append(f"    {idx}. {ex_name}: {sets} sets × {min_r}-{max_r} reps ({rest}s rest)")
     return "\n".join(lines)
 
-def build_coach_prompt(user_id: str, messages: List[Dict[str, Any]]) -> Tuple[str, str, str]:
+def get_coach_chat_history(user_id: str = "default_user", limit: int = 50) -> List[Dict[str, Any]]:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, role, content, COALESCE(thought, '') as thought, created_at
+            FROM coach_messages
+            WHERE user_id = ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        """, (user_id, limit))
+        return [dict(r) for r in cursor.fetchall()]
+
+def save_coach_message(user_id: str, role: str, content: str, thought: str = "") -> str:
+    msg_id = str(uuid.uuid4())
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO coach_messages (id, user_id, role, content, thought)
+            VALUES (?, ?, ?, ?, ?)
+        """, (msg_id, user_id, role, content, thought))
+        conn.commit()
+    return msg_id
+
+def clear_coach_chat_history(user_id: str = "default_user") -> bool:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM coach_messages WHERE user_id = ?", (user_id,))
+        conn.commit()
+    return True
+
+def build_coach_prompt(user_id: str, messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, str]], str, str]:
     settings_repo = SettingsRepository(DB_PATH, user_id=user_id)
     active_model = settings_repo.get_selected_ollama_model("qwen2.5:7b")
     ollama_url = settings_repo.get_ollama_base_url()
@@ -1219,15 +1252,18 @@ Each session features 5 exercises and 15–16 total sets to hit the optimal 10�
 ```
 """
 
-    history_str = ""
+    chat_messages = [{"role": "system", "content": system_prompt}]
     if messages:
-        recent = messages[-5:]
+        recent = messages[-20:]
         for m in recent:
-            role = "Athlete" if m.get("role") == "user" else "Coach"
-            history_str += f"\n{role}: {m.get('content', '')}"
+            role = "user" if m.get("role") in ("user", "Athlete") else "assistant"
+            content = (m.get("content") or "").strip()
+            if content:
+                chat_messages.append({"role": role, "content": content})
+    else:
+        chat_messages.append({"role": "user", "content": "Hello Coach Marcus."})
 
-    full_prompt = system_prompt + "\n\nCONVERSATION HISTORY:" + history_str + "\nCoach:"
-    return full_prompt, active_model, ollama_url
+    return chat_messages, active_model, ollama_url
 
 def resolve_or_create_exercise(ex_data: Dict[str, Any], user_id: str, db_cursor: sqlite3.Cursor, all_exercises: Dict[str, str]) -> str:
     raw_name = (ex_data.get("name") or "").strip()
@@ -1380,21 +1416,27 @@ def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, A
     }
 
 def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.app.services.ollama_client import chat_completion
+
     user_id = data.get("user_id") or "default_user"
     messages = data.get("messages", [])
-    
-    full_prompt, active_model, ollama_url = build_coach_prompt(user_id, messages)
 
-    ollama_res = generate_completion(
-        prompt=full_prompt,
+    if messages and messages[-1].get("role") in ("user", "Athlete"):
+        user_content = (messages[-1].get("content") or "").strip()
+        if user_content:
+            save_coach_message(user_id, "user", user_content)
+
+    chat_messages, active_model, ollama_url = build_coach_prompt(user_id, messages)
+
+    ollama_res = chat_completion(
+        messages=chat_messages,
         model=active_model,
         base_url=ollama_url,
-        raw_json_format=False,
         timeout=90
     )
 
     raw_text = ollama_res.get("content", "")
-    
+
     import re
     thought_match = re.search(r"<think>(.*?)</think>", raw_text, re.DOTALL)
     thought_text = thought_match.group(1).strip() if thought_match else ""
@@ -1403,7 +1445,7 @@ def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_text, re.DOTALL)
     actions = {"routines_created": 0, "routines_updated": 0, "routines_deleted": 0, "details": ""}
     clean_reply = clean_text
-    
+
     if json_match:
         try:
             parsed = json.loads(json_match.group(1))
@@ -1411,6 +1453,9 @@ def handle_coach_chat(data: Dict[str, Any]) -> Dict[str, Any]:
             clean_reply = clean_text[:json_match.start()].strip()
         except Exception as e:
             logger.warning(f"Failed to execute actions from non-stream chat: {e}")
+
+    if clean_reply:
+        save_coach_message(user_id, "assistant", clean_reply, thought_text)
 
     return {
         "reply": clean_reply,
@@ -1428,17 +1473,24 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
     - data: {"type": "action", "routines_created": N, "details": "..."}\n\n
     - data: {"type": "done"}\n\n
     """
-    from backend.app.services.ollama_client import stream_completion
+    from backend.app.services.ollama_client import stream_chat
 
     user_id = data.get("user_id") or "default_user"
     messages = data.get("messages", [])
 
-    full_prompt, active_model, ollama_url = build_coach_prompt(user_id, messages)
+    if messages and messages[-1].get("role") in ("user", "Athlete"):
+        user_content = (messages[-1].get("content") or "").strip()
+        if user_content:
+            save_coach_message(user_id, "user", user_content)
+
+    chat_messages, active_model, ollama_url = build_coach_prompt(user_id, messages)
 
     buf = ""
     json_block_buffer = []
     in_json_block = False
     in_thought = False
+    full_text_buffer = []
+    full_thought_buffer = []
 
     THINK_START = "<think>"
     THINK_END = "</think>"
@@ -1452,7 +1504,7 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
         return 0
 
     try:
-        for chunk in stream_completion(prompt=full_prompt, model=active_model, base_url=ollama_url, temperature=0.3):
+        for chunk in stream_chat(messages=chat_messages, model=active_model, base_url=ollama_url, temperature=0.3):
             token = chunk.get("token", "")
             done = chunk.get("done", False)
 
@@ -1464,12 +1516,14 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
                     if THINK_START in buf:
                         before, buf = buf.split(THINK_START, 1)
                         if before:
+                            full_text_buffer.append(before)
                             yield f"data: {json.dumps({'type': 'text', 'delta': before})}\n\n"
                         in_thought = True
                         continue
                     elif JSON_START in buf:
                         before, buf = buf.split(JSON_START, 1)
                         if before:
+                            full_text_buffer.append(before)
                             yield f"data: {json.dumps({'type': 'text', 'delta': before})}\n\n"
                         in_json_block = True
                         continue
@@ -1481,9 +1535,11 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
                             safe = buf[:-p]
                             buf = buf[-p:]
                             if safe:
+                                full_text_buffer.append(safe)
                                 yield f"data: {json.dumps({'type': 'text', 'delta': safe})}\n\n"
                             break
                         else:
+                            full_text_buffer.append(buf)
                             yield f"data: {json.dumps({'type': 'text', 'delta': buf})}\n\n"
                             buf = ""
                             break
@@ -1492,6 +1548,7 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
                     if THINK_END in buf:
                         before, buf = buf.split(THINK_END, 1)
                         if before:
+                            full_thought_buffer.append(before)
                             yield f"data: {json.dumps({'type': 'thought', 'delta': before})}\n\n"
                         in_thought = False
                         continue
@@ -1501,9 +1558,11 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
                             safe = buf[:-p]
                             buf = buf[-p:]
                             if safe:
+                                full_thought_buffer.append(safe)
                                 yield f"data: {json.dumps({'type': 'thought', 'delta': safe})}\n\n"
                             break
                         else:
+                            full_thought_buffer.append(buf)
                             yield f"data: {json.dumps({'type': 'thought', 'delta': buf})}\n\n"
                             buf = ""
                             break
@@ -1533,15 +1592,22 @@ def handle_coach_chat_stream(data: Dict[str, Any]):
         # Flush any remaining buffer characters
         if buf:
             if in_thought:
+                full_thought_buffer.append(buf)
                 yield f"data: {json.dumps({'type': 'thought', 'delta': buf})}\n\n"
             elif in_json_block:
                 json_block_buffer.append(buf)
             else:
+                full_text_buffer.append(buf)
                 yield f"data: {json.dumps({'type': 'text', 'delta': buf})}\n\n"
 
     except Exception as e:
         logger.exception("Error in handle_coach_chat_stream:")
         yield f"data: {json.dumps({'type': 'text', 'delta': f'\\n\\n*[Connection Error: {str(e)}]*'})}\n\n"
+
+    final_reply = "".join(full_text_buffer).strip()
+    final_thought = "".join(full_thought_buffer).strip()
+    if final_reply:
+        save_coach_message(user_id, "assistant", final_reply, final_thought)
 
     if json_block_buffer:
         full_json_str = "".join(json_block_buffer).strip()
@@ -1573,5 +1639,7 @@ def delete_all_user_data(user_id: str) -> dict:
         cursor.execute("DELETE FROM ai_recommendations WHERE user_id = ?", (user_id,))
         # Delete nutrition logs
         cursor.execute("DELETE FROM nutrition_logs WHERE user_id = ?", (user_id,))
+        # Delete coach messages
+        cursor.execute("DELETE FROM coach_messages WHERE user_id = ?", (user_id,))
         conn.commit()
     return {"status": "success", "message": f"All data for {user_id} deleted."}

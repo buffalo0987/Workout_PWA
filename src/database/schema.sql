@@ -176,3 +176,16 @@ CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_date ON workout_sessions(us
 CREATE INDEX IF NOT EXISTS idx_exercise_sets_exercise ON exercise_sets(workout_exercise_id);
 CREATE INDEX IF NOT EXISTS idx_nutrition_logs_user_date ON nutrition_logs(user_id, log_date);
 CREATE INDEX IF NOT EXISTS idx_ai_recs_user ON ai_recommendations(user_id, created_at);
+
+-- 12. AI Coach Chat Messages Table (Persistent Conversation History)
+CREATE TABLE IF NOT EXISTS coach_messages (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    role VARCHAR(16) NOT NULL, -- user, assistant, system
+    content TEXT NOT NULL,
+    thought TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_coach_messages_user_created ON coach_messages(user_id, created_at);
