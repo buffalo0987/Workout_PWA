@@ -250,34 +250,42 @@ def list_routines(user_id: str = "default_user") -> List[Dict[str, Any]]:
 
 
 def update_routine(routine_id: str, data: dict) -> list:
-    title = data.get("title")
-    description = data.get("description", "")
-    import json
-    schedule_days = json.dumps(data.get("schedule_days", []))
-
     with get_db() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT title, description, schedule_days FROM routines WHERE id = ?", (routine_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            return list_routines()
+
+        title = data.get("title") or existing["title"]
+        description = data.get("description") if "description" in data else (existing["description"] or "")
+        
+        if "schedule_days" in data and data["schedule_days"] is not None:
+            schedule_days = json.dumps(data["schedule_days"])
+        else:
+            schedule_days = existing["schedule_days"] or "[]"
+
         cursor.execute("""
             UPDATE routines 
             SET title = ?, description = ?, schedule_days = ?
             WHERE id = ?
         """, (title, description, schedule_days, routine_id))
         
-        # Replace exercises
-        cursor.execute("DELETE FROM routine_exercises WHERE routine_id = ?", (routine_id,))
-        exercises = data.get("exercises", [])
-        import uuid
-        for idx, ex in enumerate(exercises):
-            re_id = str(uuid.uuid4())
-            ex_id = ex.get("exercise_id")
-            target_sets = int(ex.get("target_sets", 3))
-            min_reps = int(ex.get("min_reps", 8))
-            max_reps = int(ex.get("max_reps", 12))
-            rest_seconds = int(ex.get("rest_seconds", 90))
-            cursor.execute("""
-                INSERT INTO routine_exercises (id, routine_id, exercise_id, order_index, target_sets, min_reps, max_reps, rest_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (re_id, routine_id, ex_id, idx, target_sets, min_reps, max_reps, rest_seconds))
+        # Replace exercises if provided
+        if "exercises" in data and data["exercises"] is not None:
+            cursor.execute("DELETE FROM routine_exercises WHERE routine_id = ?", (routine_id,))
+            exercises = data.get("exercises", [])
+            for idx, ex in enumerate(exercises):
+                re_id = str(uuid.uuid4())
+                ex_id = ex.get("exercise_id")
+                target_sets = int(ex.get("target_sets", 3))
+                min_reps = int(ex.get("min_reps", 8))
+                max_reps = int(ex.get("max_reps", 12))
+                rest_seconds = int(ex.get("rest_seconds", 90))
+                cursor.execute("""
+                    INSERT INTO routine_exercises (id, routine_id, exercise_id, order_index, target_sets, min_reps, max_reps, rest_seconds)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (re_id, routine_id, ex_id, idx, target_sets, min_reps, max_reps, rest_seconds))
             
         conn.commit()
     return list_routines()
@@ -1092,17 +1100,30 @@ RECENT WORKOUT LOGS (LAST 3 SESSIONS):
 DIRECTIVES:
 1. THINK BEFORE RESPONDING: In <think>...</think>, analyze diagnostics, check volume landmarks (10-20 sets/muscle group/week), sequence exercises (heavy compounds first -> accessories -> isolation), and plan any routine actions.
 2. EVIDENCE-BASED COACHING: Give direct, high-impact advice. Reference actual weights, reps, stalls, and push:pull ratios from diagnostics.
-3. ROUTINE MODIFICATIONS (JSON): If the athlete requests routine creation, edits, or multi-day splits:
+3. SAFETY GUARDRAILS: If joint pain is reported, immediately regress or substitute the exercise. Never exceed 18-22 working sets per session or suggest load jumps >5-10 lb on compounds (>2.5-5 lb on isolations).
+4. ROUTINE ACTIONS (JSON): If the athlete requests routine creation, edits, or multi-day splits:
    - Provide your scientific coaching rationale first.
    - Append routine database mutations at the very end in a ```json ... ``` block.
-   - For multi-day splits (Upper/Lower, PPL), include all routines in "routines_to_create" with non-overlapping schedule days.
+   - To MODIFY an existing routine (e.g. swapping barbell for dumbbell exercises, adjusting sets/reps): use "routines_to_update" with the routine's exact id from CURRENT ROUTINES. Never use "routines_to_create" when modifying an existing routine.
+   - To CREATE brand new routines: use "routines_to_create". For multi-day splits, include all routines with non-overlapping schedule days.
+   - To DELETE a routine: use "routines_to_delete" with the routine id.
+   - Only include the JSON block when routine changes are requested.
 
-ACTION SCHEMA (only append when creating or modifying routines):
+ACTION SCHEMA:
 ```json
 {{
+  "routines_to_update": [
+    {{
+      "id": "existing-routine-id-from-CURRENT-ROUTINES",
+      "title": "Routine Title",
+      "exercises": [
+        {{"name": "Exercise Name", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90}}
+      ]
+    }}
+  ],
   "routines_to_create": [
     {{
-      "title": "Routine Title",
+      "title": "New Routine Title",
       "schedule_days": ["Monday"],
       "exercises": [
         {{"name": "Exercise Name", "target_sets": 3, "min_reps": 8, "max_reps": 12, "rest_seconds": 90}}
@@ -1230,6 +1251,11 @@ def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, A
         cursor = conn.cursor()
         cursor.execute("SELECT id, name FROM exercises")
         all_ex = {r["name"].lower(): r["id"] for r in cursor.fetchall()}
+
+        cursor.execute("SELECT id, title, schedule_days, description FROM routines WHERE (user_id = ? OR user_id IS NULL) AND is_archived = 0", (user_id,))
+        user_routines = [dict(r) for r in cursor.fetchall()]
+        user_routines_by_id = {r["id"]: r for r in user_routines}
+        user_routines_by_title = {r["title"].lower().strip(): r for r in user_routines}
         
         def match_and_sanitize_exercises(rt):
             exercises_payload = []
@@ -1240,38 +1266,73 @@ def execute_routine_actions(user_id: str, parsed: Dict[str, Any]) -> Dict[str, A
             conn.commit()
             return exercises_payload
 
-        for rt in routines_to_create:
-            exercises_payload = match_and_sanitize_exercises(rt)
-            if exercises_payload:
-                title = rt.get("title", "AI Generated Routine")
-                tot_sets = sum(e["target_sets"] for e in exercises_payload)
-                create_routine({
-                    "user_id": user_id,
-                    "title": title,
-                    "description": rt.get("description", "Generated by AI Coach"),
-                    "schedule_days": rt.get("schedule_days", []),
-                    "exercises": exercises_payload
-                })
-                details.append(f"Created '{title}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
-                
+        updated_count = 0
+        created_count = 0
+
+        # 1. Process updates
         for rt in routines_to_update:
-            rt_id = rt.get("id")
+            rt_id = rt.get("id") or rt.get("routine_id")
+            if not rt_id or rt_id not in user_routines_by_id:
+                # Fallback: check if rt_id or title matches an existing routine by title
+                title_key = (rt.get("title") or rt.get("name") or (rt_id if isinstance(rt_id, str) and "-" not in rt_id else "")).lower().strip()
+                if title_key in user_routines_by_title:
+                    rt_id = user_routines_by_title[title_key]["id"]
+                elif len(user_routines) == 1:
+                    rt_id = user_routines[0]["id"]
+
             if rt_id:
                 exercises_payload = match_and_sanitize_exercises(rt)
                 if exercises_payload:
                     tot_sets = sum(e["target_sets"] for e in exercises_payload)
                     rt["exercises"] = exercises_payload
                     update_routine(rt_id, rt)
-                    details.append(f"Updated '{rt.get('title', rt_id)}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
-                    
+                    existing_title = user_routines_by_id.get(rt_id, {}).get("title", rt.get("title", rt_id))
+                    details.append(f"Updated '{existing_title}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
+                    updated_count += 1
+
+        # 2. Process creations (with smart collision protection for existing routines)
+        for rt in routines_to_create:
+            title = rt.get("title", "AI Generated Routine")
+            title_clean = title.lower().strip()
+
+            # If user already has a routine with this title, update it instead of creating a duplicate
+            if title_clean in user_routines_by_title:
+                existing_match = user_routines_by_title[title_clean]
+                rt_id = existing_match["id"]
+                exercises_payload = match_and_sanitize_exercises(rt)
+                if exercises_payload:
+                    tot_sets = sum(e["target_sets"] for e in exercises_payload)
+                    rt["exercises"] = exercises_payload
+                    update_routine(rt_id, rt)
+                    details.append(f"Updated '{existing_match['title']}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
+                    updated_count += 1
+                continue
+
+            exercises_payload = match_and_sanitize_exercises(rt)
+            if exercises_payload:
+                tot_sets = sum(e["target_sets"] for e in exercises_payload)
+                created = create_routine({
+                    "user_id": user_id,
+                    "title": title,
+                    "description": rt.get("description", "Generated by AI Coach"),
+                    "schedule_days": rt.get("schedule_days", []),
+                    "exercises": exercises_payload
+                })
+                if created and "id" in created:
+                    user_routines_by_id[created["id"]] = created
+                    user_routines_by_title[title_clean] = created
+                details.append(f"Created '{title}' ({len(exercises_payload)} exercises, {tot_sets} sets)")
+                created_count += 1
+
+        # 3. Process deletions
         for rt_id in routines_to_delete:
             if rt_id:
                 delete_routine(rt_id)
                 details.append("Deleted routine")
 
     return {
-        "routines_created": len(routines_to_create),
-        "routines_updated": len(routines_to_update),
+        "routines_created": created_count,
+        "routines_updated": updated_count,
         "routines_deleted": len(routines_to_delete),
         "details": ", ".join(details) if details else ""
     }
